@@ -28,7 +28,10 @@
 		{
 			"Name": "MeshModelingToolset",
 			"Enabled": true
+		},
+		{
+			"Name": "VoxelCut",
+			"Enabled": true
 		}
-		
 	]
 }

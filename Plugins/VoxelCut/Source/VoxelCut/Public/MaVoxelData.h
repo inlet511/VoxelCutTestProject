@@ -8,7 +8,7 @@
 using namespace UE::Geometry;
 
 // 八叉树节点
-struct PHYSICSTEST_API FOctreeNode
+struct VOXELCUT_API FOctreeNode
 {
 	FAxisAlignedBox3d Bounds;
 	TArray<FOctreeNode> Children;
@@ -26,7 +26,7 @@ struct PHYSICSTEST_API FOctreeNode
 };
 
 // 体素数据容器
-struct PHYSICSTEST_API FMaVoxelData
+struct VOXELCUT_API FMaVoxelData
 {
 	// 控制Voxel精度的参数
 	double MarchingCubeSize = 2.0f; // Marching Cubes的体素大小

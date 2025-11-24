@@ -9,7 +9,7 @@
 #include "VoxelCuttingActor.generated.h"
 
 UCLASS()
-class PHYSICSTEST_API AVoxelCuttingActor : public AActor
+class VOXELCUT_API AVoxelCuttingActor : public AActor
 {
 	GENERATED_BODY()
 

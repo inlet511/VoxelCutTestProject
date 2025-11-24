@@ -22,7 +22,7 @@ enum class ECutState : uint8
 };
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class PHYSICSTEST_API UVoxelCutComponent : public UActorComponent
+class VOXELCUT_API UVoxelCutComponent : public UActorComponent
 {
 	GENERATED_BODY()
 

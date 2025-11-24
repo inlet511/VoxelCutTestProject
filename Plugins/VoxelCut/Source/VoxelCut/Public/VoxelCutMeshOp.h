@@ -11,7 +11,7 @@ namespace UE
 {
 	namespace Geometry
 	{		
-		class PHYSICSTEST_API FVoxelCutMeshOp  : public FVoxelBaseOp
+		class VOXELCUT_API FVoxelCutMeshOp  : public FVoxelBaseOp
 		{
 		public:
 			virtual ~FVoxelCutMeshOp() {}

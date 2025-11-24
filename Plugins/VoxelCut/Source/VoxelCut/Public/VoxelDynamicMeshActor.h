@@ -12,7 +12,7 @@
 using namespace UE::Geometry;
 
 UCLASS()
-class PHYSICSTEST_API AVoxelDynamicMeshActor : public ADynamicMeshActor
+class VOXELCUT_API AVoxelDynamicMeshActor : public ADynamicMeshActor
 {
 	GENERATED_BODY()
 
