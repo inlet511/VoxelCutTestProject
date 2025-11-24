@@ -162,18 +162,14 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     
     // 计算刀具的边界框（扩展更新边界）
     FAxisAlignedBox3d ToolBounds = TransformedToolMesh.GetBounds();
-
-    // UE_LOG(LogTemp, Warning, TEXT("目标体边界: Min=%s, Max=%s"), 
-    //            *TargetBounds.Min.ToString(), *TargetBounds.Max.ToString());
-    // UE_LOG(LogTemp, Warning, TEXT("刀具边界: Min=%s, Max=%s"), 
-    //        *ToolBounds.Min.ToString(), *ToolBounds.Max.ToString());
-    // UE_LOG(LogTemp, Warning, TEXT("两者是否相交: %s"), 
-    //        TargetBounds.Intersects(ToolBounds) ? TEXT("是") : TEXT("否"));
     
     FVector3d ExpandedMin = ToolBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
     FVector3d ExpandedMax = ToolBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
     FAxisAlignedBox3d UpdateBounds(ExpandedMin, ExpandedMax);
 
+    double EndTime1 = FPlatformTime::Seconds();
+    
+    
     int32 UpdatedVoxels = 0;
     
     // 使用八叉树局部更新
@@ -196,7 +192,7 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
         });
     
     double EndTime = FPlatformTime::Seconds();
-    UE_LOG(LogTemp, Warning, TEXT("局部区域更新耗时: %.2f 毫秒, 更新了 %d 个体素"), (EndTime - StartTime) * 1000.0, UpdatedVoxels);
+    UE_LOG(LogTemp, Warning, TEXT("局部区域更新整体耗时: %.2f 毫秒, 工具信息准备耗时：%.5f, 占比：%.5f, 更新了 %d 个体素"), (EndTime - StartTime) * 1000.0,(EndTime1-StartTime), (EndTime1 - StartTime)/(EndTime-StartTime), UpdatedVoxels);
     
     // 切削后对局部区域进行高斯平滑（减少体素值突变）
     //SmoothLocalVoxels(TargetVoxels, VoxelMin, VoxelMax, 1);
@@ -225,7 +221,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
     ResultMesh->Copy(&MarchingCubes.Generate());
 
     // 平滑模型
-    SmoothGeneratedMesh(*ResultMesh, SmoothingIteration);
+    //SmoothGeneratedMesh(*ResultMesh, SmoothingIteration);
     
     UE_LOG(LogTemp, Warning, TEXT("Generated mesh triangle count: %d"), ResultMesh->TriangleCount());
     

@@ -87,6 +87,18 @@ bool FOctreeNode::IntersectsBounds(const FAxisAlignedBox3d& OtherBounds) const
 	return Bounds.Intersects(OtherBounds);
 }
 
+void FOctreeNode::CollectAffectedNodes(const FAxisAlignedBox3d& InBounds, TArray<FOctreeNode*>& OutNodes)
+{
+	if (!IntersectsBounds(InBounds)) return;
+	if (bIsLeaf==true) {
+		OutNodes.Add(this);
+	} else {
+		for (FOctreeNode& Child : Children) {
+			Child.CollectAffectedNodes(InBounds, OutNodes);
+		}
+	}
+}
+
 void FMaVoxelData::Reset()
 {
 	OctreeRoot = FOctreeNode();
@@ -279,79 +291,60 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
     return QueryNode(OctreeRoot, WorldPos);
 }
 
-void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
+void FMaVoxelData::UpdateLeafNode(
+	FOctreeNode& LeafNode,
+	const FAxisAlignedBox3d& UpdateBounds,
 	const TFunctionRef<float(const FVector3d&)>& UpdateFunction)
-{
-    TFunction<void(FOctreeNode&)> UpdateNode = [&](FOctreeNode& Node)
+{  
+    if (LeafNode.bIsLeaf)
     {
-        if (!Node.IntersectsBounds(UpdateBounds)) return;
+        if (LeafNode.bIsEmpty) return;
         
-        if (Node.bIsLeaf)
+        // 更新叶子节点内的体素
+        int32 VoxelsPerSide = LeafNode.VoxelsPerSide;
+        if (VoxelsPerSide <= 1) return;
+        
+        FVector3d VoxelSizeLeaf = (LeafNode.Bounds.Max - LeafNode.Bounds.Min) / (VoxelsPerSide - 1);
+        
+        for (int32 Z = 0; Z < VoxelsPerSide; Z++)
         {
-            if (Node.bIsEmpty) return;
-            
-            // 更新叶子节点内的体素
-            int32 VoxelsPerSide = Node.VoxelsPerSide;
-            if (VoxelsPerSide <= 1) return;
-            
-            FVector3d VoxelSizeLeaf = (Node.Bounds.Max - Node.Bounds.Min) / (VoxelsPerSide - 1);
-            bool bBecameNonEmpty = false;
-            
-            for (int32 Z = 0; Z < VoxelsPerSide; Z++)
+            for (int32 Y = 0; Y < VoxelsPerSide; Y++)
             {
-                for (int32 Y = 0; Y < VoxelsPerSide; Y++)
+                for (int32 X = 0; X < VoxelsPerSide; X++)
                 {
-                    for (int32 X = 0; X < VoxelsPerSide; X++)
+                    FVector3d LocalPos = FVector3d(X, Y, Z) * VoxelSizeLeaf;
+                    FVector3d WorldPos = LeafNode.Bounds.Min + LocalPos;
+                    
+                    if (UpdateBounds.Contains(WorldPos))
                     {
-                        FVector3d LocalPos = FVector3d(X, Y, Z) * VoxelSizeLeaf;
-                        FVector3d WorldPos = Node.Bounds.Min + LocalPos;
+                        float NewValue = UpdateFunction(WorldPos);
+                        int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
                         
-                        if (UpdateBounds.Contains(WorldPos))
+                        if (Index >= 0 && Index < LeafNode.Voxels.Num())
                         {
-                            float NewValue = UpdateFunction(WorldPos);
-                            int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
-                            
-                            if (Index >= 0 && Index < Node.Voxels.Num())
-                            {
-                                Node.Voxels[Index] = NewValue;
-                                
-                                // 检查节点是否变为非空
-                                if (FMath::Abs(NewValue) < Node.Bounds.Extents().GetMax() * 2.0)
-                                {
-                                    bBecameNonEmpty = true;
-                                }
-                            }
+                            LeafNode.Voxels[Index] = NewValue;
                         }
                     }
                 }
             }
-            
-            if (bBecameNonEmpty)
-            {
-                Node.bIsEmpty = false;
-            }
         }
-        else
-        {
-            for (FOctreeNode& Child : Node.Children)
-            {
-                UpdateNode(Child);
-            }
-            
-            // 更新后重新检查子节点是否都为空
-            Node.bIsEmpty = true;
-            for (const FOctreeNode& Child : Node.Children)
-            {
-                if (!Child.bIsEmpty)
-                {
-                    Node.bIsEmpty = false;
-                    break;
-                }
-            }
-        }
-    };
-    
-    UpdateNode(OctreeRoot);
+    }
+      
+}
+
+void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
+                                const TFunctionRef<float(const FVector3d&)>& UpdateFunction)
+{
+	// 1. 收集受到影响的叶子节点
+	TArray<FOctreeNode*> AffectedNodes;
+	OctreeRoot.CollectAffectedNodes(UpdateBounds, AffectedNodes);
+
+	// 2. 并行处理所有叶子节点
+	ParallelFor(AffectedNodes.Num(), [&](int32 i){
+		FOctreeNode* Node = AffectedNodes[i];
+		UpdateLeafNode(*Node,UpdateBounds,UpdateFunction);
+	});
+	
 }
 
 void FMaVoxelData::DebugLogOctreeStats() const

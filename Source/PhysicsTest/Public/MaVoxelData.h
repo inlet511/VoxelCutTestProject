@@ -22,6 +22,7 @@ struct PHYSICSTEST_API FOctreeNode
 	void Subdivide(double MinVoxelSize);
 	bool ContainsPoint(const FVector3d& Point) const;
 	bool IntersectsBounds(const FAxisAlignedBox3d& OtherBounds) const;
+	void CollectAffectedNodes(const FAxisAlignedBox3d& InBounds, TArray<FOctreeNode*>& OutNodes);
 };
 
 // 体素数据容器
@@ -39,6 +40,10 @@ struct PHYSICSTEST_API FMaVoxelData
 	
 	void BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransform& Transform);
 	float GetValueAtPosition(const FVector3d& WorldPos) const;
+	void UpdateLeafNode(
+		FOctreeNode& LeafNode,
+		const FAxisAlignedBox3d& UpdateBounds,
+		const TFunctionRef<float(const FVector3d&)>& UpdateFunction); 
 	void UpdateRegion(const FAxisAlignedBox3d& UpdateBounds, const TFunctionRef<float(const FVector3d&)>& UpdateFunction);
 
 	// 调试
