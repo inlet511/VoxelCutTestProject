@@ -7,6 +7,7 @@
 #include "DynamicMesh/DynamicMesh3.h"
 #include "VoxelCutMeshOp.h"
 #include "Components/DynamicMeshComponent.h"
+#include "ToolSDFGenerator.h"
 #include "VoxelCutComponent.generated.h"
 
 using namespace UE::Geometry;
@@ -148,6 +149,8 @@ private:
     
 	// 复制工具网格（轻量级操作）
 	TSharedPtr<FDynamicMesh3> CopyToolMesh();
+
+	TUniquePtr<FToolSDFGenerator> ToolSDFGenerator;
 
 // Debug 相关信息
 	

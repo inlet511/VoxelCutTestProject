@@ -2,7 +2,6 @@
 
 
 #include "VoxelCutComponent.h"
-
 #include "DynamicMesh/MeshTransforms.h"
 #include "Engine/Engine.h"
 
@@ -122,7 +121,7 @@ void UVoxelCutComponent::InitializeCutSystem()
 	CutOp->CutToolMesh = CopyToolMesh();
 	
     
-	// 获取目标网格数据
+	// 初始化目标物体体素
 	UDynamicMesh* TargetDynamicMesh = TargetMeshComponent->GetDynamicMesh();
 	if (TargetDynamicMesh)
 	{
@@ -131,21 +130,28 @@ void UVoxelCutComponent::InitializeCutSystem()
 		TargetDynamicMesh->ProcessMesh([this](const FDynamicMesh3& SourceMesh)
 		{
 			CutOp->TargetMesh->Copy(SourceMesh);
-		});
-        
+		});        
 		// 设置目标变换
 		CutOp->TargetTransform = TargetMeshComponent->GetComponentTransform();
 
 		// 体素化切割目标（只做一次）
 		CutOp->InitializeVoxelData(nullptr);
-
-		
 	}
 
-	bSystemInitialized = true;
+	// 初始化切割工具VolumeTexture资源
+	ToolSDFGenerator = MakeUnique<FToolSDFGenerator>();
+	bool bSuccess = ToolSDFGenerator->PrecomputeSDF(
+		*CutOp->CutToolMesh, 
+		CutToolMeshComponent->GetComponentTransform(),
+		64,
+		5.0f
+	);
+	if (bSuccess)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("工具SDF预计算完成"));
+	}	
 
-	//VisualizeOctreeNode();
-	//PrintOctreeDetails();
+	bSystemInitialized = true;
 }
 
 bool UVoxelCutComponent::NeedsCutUpdate(const FTransform& InCurrentToolTransform)

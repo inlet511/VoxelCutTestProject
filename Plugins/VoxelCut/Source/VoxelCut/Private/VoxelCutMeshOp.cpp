@@ -98,9 +98,6 @@ double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<
 {
     double NearestDistSqr; 
     int NearestTriID = Spatial.FindNearestTriangle(LocalPoint, NearestDistSqr);
-
-    // UE_LOG(LogTemp, Warning, TEXT("查询点: Local=%s, World=%s"), 
-    //       *LocalPoint.ToString(), *WorldPoint.ToString());
     
     if (NearestTriID == IndexConstants::InvalidID)
     {
@@ -110,12 +107,7 @@ double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<
     // 计算有符号距离（内部为负，外部为正）    
     bool bInSide = Winding.IsInside(WorldPoint);    
 
-    double SignedDist =  FMathd::Sqrt(NearestDistSqr) * (bInSide? -1 : 1); 
-
-    // UE_LOG(LogTemp, Warning, TEXT("最近距离平方: %f, 有符号距离: %f, 内部: %s"), 
-    //        NearestDistSqr, SignedDist, bInSide ? TEXT("是") : TEXT("否"));
-    
-    return SignedDist;
+    return  FMathd::Sqrt(NearestDistSqr) * (bInSide? -1 : 1); 
 }
 
 
@@ -150,46 +142,17 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     }
 
     double StartTime = FPlatformTime::Seconds();
-    
-    // 使用八叉树优化更新
-    FDynamicMesh3 TransformedToolMesh = ToolMesh;
-    MeshTransforms::ApplyTransform(TransformedToolMesh, ToolTransform, true);
-    
-    FDynamicMeshAABBTree3 ToolSpatial(&TransformedToolMesh);    
-    TFastWindingTree<FDynamicMesh3> ToolWinding(&ToolSpatial);
 
-    FAxisAlignedBox3d TargetBounds = TargetVoxels.GetOctreeBounds();
-    
-    // 计算刀具的边界框（扩展更新边界）
-    FAxisAlignedBox3d ToolBounds = TransformedToolMesh.GetBounds();
-    
-    FVector3d ExpandedMin = ToolBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
-    FVector3d ExpandedMax = ToolBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
-    FAxisAlignedBox3d UpdateBounds(ExpandedMin, ExpandedMax);
+    // 切削工具的扩展边界
+    FAxisAlignedBox3d OriginalBounds = ToolMesh.GetBounds();
+    FAxisAlignedBox3d TransformedBounds(OriginalBounds, ToolTransform);
+    FVector3d ExpandedMin = OriginalBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
+    FVector3d ExpandedMax = OriginalBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
+    FAxisAlignedBox3d ToolExtendedBounds(ExpandedMin, ExpandedMax);
 
     double EndTime1 = FPlatformTime::Seconds();
     
-    
-    int32 UpdatedVoxels = 0;
-    
-    // 使用八叉树局部更新
-    TargetVoxels.UpdateRegion(UpdateBounds, 
-        [&](const FVector3d& WorldPos) -> float
-        {
-            FVector3d LocalPos = ToolTransform.InverseTransformPosition(WorldPos);
-            double ToolDistance = GetDistanceToMesh(ToolSpatial, ToolWinding, LocalPos, WorldPos);
-            
-            float CurrentValue = TargetVoxels.GetValueAtPosition(WorldPos);
-            
-            // 切削逻辑：如果工具在内部，设为正值（外部）
-            if (ToolDistance < 0 && CurrentValue < 0)
-            {
-                UpdatedVoxels++;
-                return FMath::Abs(CurrentValue); // 切削掉内部区域
-            }
-            
-            return CurrentValue; // 保持原值
-        });
+   // TODO:这里加入GPU切削
     
     double EndTime = FPlatformTime::Seconds();
     UE_LOG(LogTemp, Warning, TEXT("局部区域更新整体耗时: %.2f 毫秒, 工具信息准备耗时：%.5f, 占比：%.5f, 更新了 %d 个体素"), (EndTime - StartTime) * 1000.0,(EndTime1-StartTime), (EndTime1 - StartTime)/(EndTime-StartTime), UpdatedVoxels);

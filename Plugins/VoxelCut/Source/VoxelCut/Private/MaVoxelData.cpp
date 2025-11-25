@@ -145,15 +145,15 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
             
             // 为叶子节点分配体素存储（2x2x2 最小分辨率）
             int32 VoxelsPerSide = 2;
-            if (MinNodeSize > MinVoxelSize * 2) 
-            {
-                VoxelsPerSide = 4; // 中等大小节点
-            }
-            if (MinNodeSize > MinVoxelSize * 4) 
-            {
-                VoxelsPerSide = 8; // 较大节点
-            }
-            Node.Voxels.SetNumZeroed(VoxelsPerSide * VoxelsPerSide * VoxelsPerSide);
+            // if (MinNodeSize > MinVoxelSize * 2) 
+            // {
+            //     VoxelsPerSide = 4; // 中等大小节点
+            // }
+            // if (MinNodeSize > MinVoxelSize * 4) 
+            // {
+            //     VoxelsPerSide = 8; // 较大节点
+            // }
+            Node.Voxels.SetNumZeroed(8);
             Node.VoxelsPerSide = VoxelsPerSide;
             
             // 计算叶子节点内每个体素的值
