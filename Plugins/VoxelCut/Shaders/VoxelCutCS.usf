@@ -1,78 +1,75 @@
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
 
-// 预计算的SDF立方体贴图
-TextureCube SDFTexture;
-SamplerState SDFSampler;
-
-// 体素节点数据结构
-struct FOctreeNodeData
+// 定义体素节点结构（与C++中的FlatOctreeNode一致）
+struct FlatOctreeNode
 {
 	float3 BoundsMin;
 	float3 BoundsMax;
-	uint bIsLeaf;
-	uint bIsEmpty;
-	uint VoxelsPerSide;
-	uint ChildCount;
-	uint ChildOffset;
+	float Voxels[8];
 };
 
-// 八叉树节点缓冲区
-StructuredBuffer<FOctreeNodeData> OctreeNodes : register(t0);
-// 体素数据缓冲区
-RWStructuredBuffer<float> Voxels : register(u0);
-
-// 工具SDF采样函数
-float SampleToolSDF(float3 WorldPos, float3 SDFBoundsMin, float3 SDFBoundsMax, float BoundsExpansion, Texture3D SDFTexture, SamplerState SDFSampler)
+// 工具变换矩阵（从C++传递的UniformBuffer）
+cbuffer ToolTransformUniformBuffer : register(b0)
 {
-	// 1. 将世界位置映射到SDF边界内的局部坐标
-	float3 LocalPos = WorldPos - SDFBoundsMin;
-	float3 SDFExtent = SDFBoundsMax - SDFBoundsMin;
-    
-	// 2. 计算归一化的UVW坐标 [0,1]范围
-	float3 UVW = LocalPos / SDFExtent;
-    
-	// 3. 直接采样3D纹理
-	float EncodedDist = SDFTexture.SampleLevel(SDFSampler, UVW, 0);
-    
-	// 4. 解码为原始符号距离
-	float NormDist = (EncodedDist * 2.0f) - 1.0f;
-	return NormDist * BoundsExpansion;
-}
+	float4x4 ToolTransform;
+};
 
-[numthreads(8, 8, 8)]
-void MainCS(uint3 GroupId : SV_GroupID,
-	uint3 DispatchThreadId : SV_DispatchThreadID,
-	uint3 GroupThreadId : SV_GroupThreadID)
+// 输入/输出缓冲区
+StructuredBuffer<FlatOctreeNode> InputBuffer : register(t0);
+RWStructuredBuffer<FlatOctreeNode> OutputBuffer : register(u0);
+
+
+// SDF纹理及采样器
+Texture3D ToolSDF : register(t1);
+SamplerState ToolSDFSampler : register(s0);
+
+// 线程组大小（与C++中定义的THREADS_X/Y/Z一致）
+[numthreads(8, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	// 计算当前处理的体素索引
-	uint VoxelIndex = DispatchThreadId.x + 
-					 DispatchThreadId.y * 64 + 
-					 DispatchThreadId.z * 64 * 64;
+	uint NodeIndex = DispatchThreadId.x;
+	FlatOctreeNode Node = InputBuffer[NodeIndex];
 
-	// 参数通过宏自动绑定，直接使用即可
-	float3 WorldPos = CalculateWorldPos(DispatchThreadId);    
+	// 计算节点的中心点和尺寸
+	float3 NodeCenter = (Node.BoundsMin + Node.BoundsMax) * 0.5;
+	float3 NodeExtent = Node.BoundsMax - Node.BoundsMin;
+	float3 VoxelStep = NodeExtent / 1.0; // 2x2x2体素的步长（每个维度分2段）
 
-	// 3. 检查是否在更新范围内
-	if (any(WorldPos < UpdateBoundsMin) || any(WorldPos > UpdateBoundsMax))
-		return;
-
-	// 4. 计算工具距离
-	float ToolDistance = SampleToolSDF(
-		WorldPos, 
-		Parameters.SDFBoundsMin, 
-		Parameters.SDFBoundsMax, 
-		Parameters.BoundsExpansion,
-		Parameters.SDFTexture,
-		Parameters.SDFSampler
-	);
-    
-	// 5. 更新体素值
-	float CurrentValue = Voxels[VoxelIndex];
-    
-	// 切削逻辑：如果工具在内部，设为正值（外部）
-	if (ToolDistance < 0 && CurrentValue < 0)
+	// 遍历8个体素（2x2x2网格）
+	for (int i = 0; i < 8; i++)
 	{
-		Voxels[VoxelIndex] = abs(CurrentValue);
+		// 计算体素在节点内的本地坐标（0或1，对应2x2x2的8个顶点）
+		int3 VoxelLocalPos = int3(
+			(i & 1) ? 1 : 0,
+			(i & 2) ? 1 : 0,
+			(i & 4) ? 1 : 0
+		);
+
+		// 计算体素在世界空间中的位置
+		float3 VoxelWorldPos = Node.BoundsMin + VoxelLocalPos * VoxelStep;
+
+		// 1. 将体素世界坐标转换到工具的局部空间
+		float4 VoxelToolLocal = mul(float4(VoxelWorldPos, 1.0), inverse(ToolTransform));
+		float3 VoxelToolPos = VoxelToolLocal.xyz;
+
+		// 2. 计算SDF纹理的UVW坐标（将工具局部空间位置映射到[0,1]范围）
+		// SDF纹理的边界信息在C++中已通过FToolSDFGenerator预处理
+		// 这里假设SDF的有效范围是工具网格的边界，通过纹理采样自动 clamp
+		float3 SDFUVW = VoxelToolPos; // 实际使用时可能需要根据SDFBounds进行归一化
+
+		// 采样原始带符号距离（无需解码）
+		int16 RawSDF = ToolSDF.SampleLevel(ToolSDFSampler, SDFUVW, 0).r;
+		float SignedDist = (float)RawSDF;  // 直接转换为浮点值
+
+		// 4. 判断体素是否在工具内部（SDF < 0表示内部）
+		if (SignedDist < 0.0)
+		{
+			// 体素在工具内部，将其值设为正（表示被切割）
+			Node.Voxels[i] = abs(Node.Voxels[i]); // 保留距离大小，转为正值
+		}
 	}
+
+	// 写入输出缓冲区
+	OutputBuffer[NodeIndex] = Node;
 }

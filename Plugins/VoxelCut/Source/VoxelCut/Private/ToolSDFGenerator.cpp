@@ -15,10 +15,6 @@ bool FToolSDFGenerator::PrecomputeSDF(
     
     // 1. 计算工具网格在自身空间的边界
     FAxisAlignedBox3d OriginalBounds = ToolMesh.GetBounds();
-
-    double MaxSize = (OriginalBounds.Max - OriginalBounds.Min).GetMax();
-
-    // 扩展边界以包含足够的周边区域
     SDFBounds.Min = OriginalBounds.Min;
     SDFBounds.Max = OriginalBounds.Max;
     FVector3d SDFExtent = SDFBounds.Max - SDFBounds.Min;
@@ -28,9 +24,12 @@ bool FToolSDFGenerator::PrecomputeSDF(
     TFastWindingTree<FDynamicMesh3> ToolWinding(&ToolSpatial);
 
     // 3. 初始化VolumeTexture数据
-    TArray<uint8> SDFVolumeData;
+    TArray<int16> SDFVolumeData;
     int32 TotalVoxels = VolumeSize * VolumeSize * VolumeSize;
     SDFVolumeData.SetNumZeroed(TotalVoxels);
+
+    // 计算最大可能距离（用于范围限制）
+    double MaxPossibleDist = SDFExtent.GetMax() * 2.0;
 
     // 4. 并行计算每个体素的符号距离
     ParallelFor(VolumeSize, [&](int32 Z)
@@ -56,23 +55,19 @@ bool FToolSDFGenerator::PrecomputeSDF(
                 if (NearestTriID == IndexConstants::InvalidID)
                 {
                     // 超出工具范围，设为最大距离
-                    SignedDist = MaxSize;
+                    SignedDist = (float)MaxPossibleDist;;
                 }
                 else
                 {
                     double NearestDist = FMath::Sqrt(NearestDistSqr);
-                    // 判断内外（内部为负，外部为正）
                     bool bInside = ToolWinding.IsInside(SamplePos);
-                    SignedDist = bInside ? -NearestDist : NearestDist;
+                    SignedDist = (float)(bInside ? -NearestDist : NearestDist);
                 }
 
-                // 归一化到[0,1]范围并编码为8位
-                float NormDist = FMath::Clamp(SignedDist / MaxSize, -1.0f, 1.0f);
-                uint8 Encoded = (uint8)((NormDist + 1.0f) * 0.5f * 255.0f);
-                
-                // 计算线性索引
-                int32 Index = Z * (VolumeSize * VolumeSize) + Y * VolumeSize + X;
-                SDFVolumeData[Index] = Encoded;
+                // 不进行归一化，直接存储原始带符号距离（限制范围避免溢出）
+                 int16 Encoded = (int16)FMath::Clamp(SignedDist, -32767.0f, 32767.0f);
+                 int32 Index = Z * (VolumeSize * VolumeSize) + Y * VolumeSize + X;
+                 SDFVolumeData[Index] = Encoded;
             }
         }
     });
@@ -80,7 +75,7 @@ bool FToolSDFGenerator::PrecomputeSDF(
     // 5. 创建和上传纹理数据
     FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create3D(TEXT("ToolSDFVolumeTexture"))
         .SetExtent(VolumeSize)
-        .SetFormat(PF_G8)
+        .SetFormat(PF_R16_SINT)
         .SetNumMips(1)
         .SetFlags(ETextureCreateFlags::ShaderResource)
         .SetInitialState(ERHIAccess::SRVMask);
@@ -89,7 +84,7 @@ bool FToolSDFGenerator::PrecomputeSDF(
     class FSDFBulkData : public FResourceBulkDataInterface
     {
     public:
-        FSDFBulkData(const TArray<uint8>& InData, int32 InSize) 
+        FSDFBulkData(const TArray<int16>& InData, int32 InSize) 
             : Data(InData), Size(InSize) {}
         
         virtual const void* GetResourceBulkData() const override { return Data.GetData(); }
@@ -97,11 +92,11 @@ bool FToolSDFGenerator::PrecomputeSDF(
         virtual void Discard() override {}
         
     private:
-        const TArray<uint8>& Data;
+        const TArray<int16>& Data;
         int32 Size;
     };
 
-    FSDFBulkData* BulkData = new FSDFBulkData(SDFVolumeData, TotalVoxels);
+    FSDFBulkData* BulkData = new FSDFBulkData(SDFVolumeData, TotalVoxels*sizeof(int16));
     TextureDesc.SetBulkData(BulkData);
 
     // 创建纹理

@@ -21,9 +21,15 @@ struct VOXELCUT_API FVoxelCutCSParams
 };
 
 
-// 定义Uniform Buffer,用于传递ToolTransform
+// 定义ToolTransform UniformBuffer,用于传递ToolTransform
 BEGIN_UNIFORM_BUFFER_STRUCT(FToolTransformUniformBuffer, )
 	SHADER_PARAMETER(FMatrix44f, ToolTransform)
+END_UNIFORM_BUFFER_STRUCT()
+
+// 添加SDF边界UniformBuffer定义
+BEGIN_UNIFORM_BUFFER_STRUCT(FSDFBoundsUniformBuffer, )
+	SHADER_PARAMETER(FVector3f, SDFBoundsMin)
+	SHADER_PARAMETER(FVector3f, SDFBoundsMax)
 END_UNIFORM_BUFFER_STRUCT()
 
 class FVoxelCutCS: public FGlobalShader
@@ -32,11 +38,12 @@ class FVoxelCutCS: public FGlobalShader
 	SHADER_USE_PARAMETER_STRUCT(FVoxelCutCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_TEXTURE(Texture3D, ToolSDF)
+		SHADER_PARAMETER_TEXTURE(Texture3D<int16>, ToolSDF)
 		SHADER_PARAMETER_SAMPLER(SamplerState, ToolSDFSampler)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FlatOctreeNode>, InputBuffer)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FlatOctreeNode>, OutputBuffer)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FToolTransformUniformBuffer, ToolTransformUniformBuffer)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSDFBoundsUniformBuffer, SDFBoundsUniformBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 

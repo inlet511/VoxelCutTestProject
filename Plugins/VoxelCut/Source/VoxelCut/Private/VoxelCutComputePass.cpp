@@ -9,6 +9,7 @@
 
 // 实现UNIFORM_BUFFER
 IMPLEMENT_UNIFORM_BUFFER_STRUCT(FToolTransformUniformBuffer, "ToolTransformUniformBuffer");
+IMPLEMENT_UNIFORM_BUFFER_STRUCT(FSDFBoundsUniformBuffer, "SDFBoundsUniformBuffer");
 // 实现Global Shader
 IMPLEMENT_GLOBAL_SHADER(FVoxelCutCS,"/Project/Shaders/VoxelCutCS.usf","MainCS",SF_Compute);
 
@@ -65,9 +66,16 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 		PassParameters->OutputBuffer = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputBuffer, PF_Unknown));
 
 		// 5. 传入UniformBuffer
-		// 创建第一个Uniform Buffer
+		//  5.1 传递ToolTransform Uniform Buffer
 		auto* ToolTransformUniformBuffer = GraphBuilder.AllocObject<FToolTransformUniformBuffer>();
 		ToolTransformUniformBuffer->ToolTransform = FMatrix44f(Params.ToolTransform.ToMatrixWithScale()); // 假设Params中有这个数据
+
+		// 5.2 传递SDF边界 UniformBuffer
+		auto* SDFBoundsUniformBuffer = GraphBuilder.AllocParameters<FSDFBoundsUniformBuffer>();
+		SDFBoundsUniformBuffer->SDFBoundsMin = FVector3f(Params.ToolSDF->GetSDFBounds().Min);
+		SDFBoundsUniformBuffer->SDFBoundsMax = FVector3f(Params.ToolSDF->GetSDFBounds().Max);
+		TRDGUniformBufferRef<FSDFBoundsUniformBuffer> SDFBoundsBuffer = GraphBuilder.CreateUniformBuffer(SDFBoundsUniformBuffer);
+		PassParameters->SDFBoundsUniformBuffer = SDFBoundsBuffer;
 
 		FIntVector GroupCount(8, 1, 1);
 		

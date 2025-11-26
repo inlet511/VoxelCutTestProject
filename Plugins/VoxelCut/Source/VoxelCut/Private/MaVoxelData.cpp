@@ -74,7 +74,6 @@ void FOctreeNode::Subdivide(double MinVoxelSize)
 	}
     
 	bIsLeaf = false;
-	Voxels.Empty(); // 非叶子节点不存储具体体素数据
 }
 
 bool FOctreeNode::ContainsPoint(const FVector3d& Point) const
@@ -153,7 +152,6 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
             // {
             //     VoxelsPerSide = 8; // 较大节点
             // }
-            Node.Voxels.SetNumZeroed(8);
             Node.VoxelsPerSide = VoxelsPerSide;
             
             // 计算叶子节点内每个体素的值
@@ -252,7 +250,7 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
             {
                 int32 Index = (Z + dz) * VoxelsPerSide * VoxelsPerSide + 
                              (Y + dy) * VoxelsPerSide + (X + dx);
-                return (Index >= 0 && Index < Node.Voxels.Num()) ? Node.Voxels[Index] : 1.0f;
+                return (Index >= 0 && Index < 8) ? Node.Voxels[Index] : 1.0f;
             };
             
             float v000 = GetVoxel(0, 0, 0);
@@ -320,7 +318,7 @@ void FMaVoxelData::UpdateLeafNode(
                         float NewValue = UpdateFunction(WorldPos);
                         int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
                         
-                        if (Index >= 0 && Index < LeafNode.Voxels.Num())
+                        if (Index >= 0 && Index < 8)
                         {
                             LeafNode.Voxels[Index] = NewValue;
                         }
@@ -361,7 +359,7 @@ void FMaVoxelData::DebugLogOctreeStats() const
             if (!Node.bIsEmpty) 
             {
                 NonEmptyLeafCount++;
-                TotalVoxels += Node.Voxels.Num();
+                TotalVoxels += 8;
             }
         }
         else

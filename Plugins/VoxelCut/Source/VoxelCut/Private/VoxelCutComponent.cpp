@@ -53,7 +53,20 @@ void UVoxelCutComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	UpdateStateMachine();
 }
 
+void UVoxelCutComponent::OnVoxelDataUpdated()
+{
+	if (!CutOp.IsValid() || !CutOp->PersistentVoxelData.IsValid())
+		return;
 
+	// 在游戏线程生成新的网格
+	Async(EAsyncExecution::TaskGraphMainThread, [this]()
+	{
+		FProgressCancel Cancel;
+		CutOp->ConvertVoxelsToMesh(*CutOp->PersistentVoxelData, &Cancel);
+		FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();
+		OnCutComplete(ResultMesh);
+	});
+}
 
 
 void UVoxelCutComponent::StartCutting()
@@ -107,6 +120,16 @@ void UVoxelCutComponent::InitializeCutSystem()
 	if (!CutOp.IsValid())
 	{
 		CutOp = MakeShared<FVoxelCutMeshOp>();
+		// 绑定体素数据更新回调
+		// 使用 TWeakObjectPtr 包装 UObject 指针，避免悬垂引用
+		TWeakObjectPtr<UVoxelCutComponent> ThisWeakPtr(this);
+		CutOp->OnVoxelDataUpdated.BindLambda([ThisWeakPtr]()
+		{
+			if (ThisWeakPtr.IsValid())
+			{
+				ThisWeakPtr->OnVoxelDataUpdated();
+			}
+		});
 	}
     
 	// 设置基础参数
@@ -312,11 +335,10 @@ void UVoxelCutComponent::VisualizeOctreeNodeRecursive(const FOctreeNode& Node, i
 		DrawDebugSphere(GetWorld(), Center, 5.0f, 8, FColor::White, true, -1.0f, 0, 1.0f);
 		
 		// 显示体素数量信息
-		if (Node.Voxels.Num() > 0)
-		{
-			FString VoxelInfo = FString::Printf(TEXT("Leaf L%d\nVoxels:%d"), Depth, Node.Voxels.Num());
+
+			FString VoxelInfo = FString::Printf(TEXT("Leaf L%d\n"), Depth);
 			DrawDebugString(GetWorld(), Center + FVector(0,0,20), VoxelInfo, nullptr, FColor::White, -1.0f, true);
-		}
+		
 	}
 	else
 	{
@@ -390,15 +412,14 @@ void UVoxelCutComponent::PrintOctreeNodeRecursive(const FOctreeNode& Node, int32
     if (Node.bIsLeaf)
     {
         LeafCount++;
-        TotalVoxels += Node.Voxels.Num();
+        TotalVoxels += 8;
         
-        if (!Node.bIsEmpty && Node.Voxels.Num() > 0)
+        if (!Node.bIsEmpty)
         {
-            UE_LOG(LogTemp, Warning, TEXT("%s  体素配置: %d个体素"), 
-                   *Indent, Node.Voxels.Num());
+            UE_LOG(LogTemp, Warning, TEXT("%s "),     *Indent);
             
             // 打印前几个体素的值作为样本
-            int32 SampleCount = FMath::Min(5, Node.Voxels.Num());
+            int32 SampleCount = 5;
             FString SampleValues;
             for (int32 i = 0; i < SampleCount; i++)
             {

@@ -100,6 +100,9 @@ public:
 	                           FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
+
+	// 体素更新响应函数
+	void OnVoxelDataUpdated();
 	
 	// 目标网格
 	UPROPERTY()

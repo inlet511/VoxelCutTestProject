@@ -7,6 +7,7 @@
 #include "BaseOps/VoxelBaseOp.h"
 #include "MaVoxelData.h"
 #include "ToolSDFGenerator.h"
+#include "VoxelCutComputePass.h"
 
 namespace UE
 {
@@ -16,6 +17,9 @@ namespace UE
 		{
 		public:
 			virtual ~FVoxelCutMeshOp() {}
+
+			DECLARE_DELEGATE(FOnVoxelDataUpdated);
+			FOnVoxelDataUpdated OnVoxelDataUpdated;
 
 			// 输入：目标网格和刀具网格
 			TSharedPtr<FDynamicMesh3, ESPMode::ThreadSafe> TargetMesh;
@@ -58,8 +62,7 @@ namespace UE
 			{
 				return ResultMesh.Get();
 			}
-
-		protected:
+			
 			// 体素化方法
 			bool VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& Transform, 
 							 FMaVoxelData& VoxelData, FProgressCancel* Progress);

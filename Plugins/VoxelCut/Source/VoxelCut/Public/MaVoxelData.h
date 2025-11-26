@@ -12,7 +12,7 @@ struct VOXELCUT_API FOctreeNode
 {
 	FAxisAlignedBox3d Bounds;
 	TArray<FOctreeNode> Children;
-	TArray<float> Voxels; // 叶子节点存储体素数据
+	float Voxels[8]; // 叶子节点存储体素数据(长度固定为8)
 	int32 VoxelsPerSide = 0; // 每边体素数量
 	int32 Depth = 0;
 	bool bIsLeaf = true;

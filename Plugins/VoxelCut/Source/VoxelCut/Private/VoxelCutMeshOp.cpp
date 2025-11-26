@@ -156,8 +156,48 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     // 1. 收集受到影响的叶子节点
     TArray<FOctreeNode*> AffectedNodes;
     TargetVoxels.OctreeRoot.CollectAffectedNodes(ToolExtendedBounds, AffectedNodes);
-
+    uint32 NodeCount = AffectedNodes.Num();
+    if (NodeCount ==0)
+        return;
+    
+    TArray<FlatOctreeNode> FlatOctreeNodes;
+    FlatOctreeNodes.Reserve(NodeCount);
+    for (uint32 i = 0; i < NodeCount; i++)
+    {
+        FlatOctreeNodes[i].BoundsMax = AffectedNodes[i]->Bounds.Max;
+        FlatOctreeNodes[i].BoundsMin = AffectedNodes[i]->Bounds.Min;
+        FMemory::Memcpy(FlatOctreeNodes[i].Voxels, AffectedNodes[i]->Voxels, sizeof(float) * 8);
+    }
     // 2. 发送给GPU处理
+    FVoxelCutCSParams Params;
+    Params.ToolSDF = ToolSDF;
+    Params.ToolTransform = ToolTransform;
+
+    // 3. 调用ComputeShader并设置回调
+    FVoxlCutShaderInterface::Dispatch(Params,
+        [this, &TargetVoxels, AffectedNodes](TArray<FlatOctreeNode> ResultNodes) 
+    {
+            // 4. 处理GPU返回的结果
+                if (ResultNodes.Num() != AffectedNodes.Num())
+                {
+                    UE_LOG(LogTemp, Error, TEXT("Compute shader result count mismatch"));
+                    return;
+                }
+
+                // 5. 更新体素数据
+                for (int32 i = 0; i < AffectedNodes.Num(); i++)
+                {
+                    FOctreeNode* Node = AffectedNodes[i];
+                    const FlatOctreeNode& ResultNode = ResultNodes[i];
+                    FMemory::Memcpy(Node->Voxels, ResultNode.Voxels, sizeof(float) * 8);
+                }
+
+                // 6. 触发模型更新回调
+                if (OnVoxelDataUpdated.IsBound())
+                {
+                    OnVoxelDataUpdated.Execute();
+                }
+    });
     
     
     double EndTime = FPlatformTime::Seconds();
