@@ -10,19 +10,21 @@ struct OctreeNodeToGPU
 };
 
 // 定义Uniform Buffer,用于传递ToolTransform
-BEGIN_UNIFORM_BUFFER_STRUCT(FMyUniform, )
-SHADER_PARAMETER(FMatrix, ToolTransform)
+BEGIN_UNIFORM_BUFFER_STRUCT(FToolTransformUniformBuffer, )
+	SHADER_PARAMETER(FMatrix44f, ToolTransform)
 END_UNIFORM_BUFFER_STRUCT()
-IMPLEMENT_UNIFORM_BUFFER_STRUCT(FMyUniform, "MyUniform")
 
 class FVoxelCutCS: public FGlobalShader
 {
-	DECLARE_GLBAL_SHADER(FVoxelCutCS);
+	DECLARE_GLOBAL_SHADER(FVoxelCutCS);
 	SHADER_USE_PARAMETER_STRUCT(FVoxelCutCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<OctreeNodeToGPU>, OctreeNodeArrayBuffer)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FMyUniform,UniformBuffer)
+		SHADER_PARAMETER_TEXTURE(Texture3D, ToolSDF)
+		SHADER_PARAMETER_SAMPLER(SamplerState, ToolSDFSampler)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<OctreeNodeToGPU>, InputBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<OctreeNodeToGPU>, OutputBuffer)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FToolTransformUniformBuffer, ToolTransformUniformBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 
@@ -39,38 +41,35 @@ static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameter
 };
 
 // This is a public interface that we define so outside code can invoke our compute shader.
-class COMPUTESHADER_API FExampleComputeShaderInterface {
+class COMPUTESHADER_API FVoxlCutShaderInterface {
 public:
 	// Executes this shader on the render thread
 	static void DispatchRenderThread(
 		FRHICommandListImmediate& RHICmdList,
-		FExampleComputeShaderDispatchParams Params,
 		TFunction<void(int OutputVal)> AsyncCallback
 	);
 
 	// Executes this shader on the render thread from the game thread via EnqueueRenderThreadCommand
 	static void DispatchGameThread(
-		FExampleComputeShaderDispatchParams Params,
 		TFunction<void(int OutputVal)> AsyncCallback
 	)
 	{
 		ENQUEUE_RENDER_COMMAND(SceneDrawCompletion)(
-		[Params, AsyncCallback](FRHICommandListImmediate& RHICmdList)
+		[AsyncCallback](FRHICommandListImmediate& RHICmdList)
 		{
-			DispatchRenderThread(RHICmdList, Params, AsyncCallback);
+			DispatchRenderThread(RHICmdList, AsyncCallback);
 		});
 	}
 
 	// Dispatches this shader. Can be called from any thread
 	static void Dispatch(
-		FExampleComputeShaderDispatchParams Params,
 		TFunction<void(int OutputVal)> AsyncCallback
 	)
 	{
 		if (IsInRenderingThread()) {
-			DispatchRenderThread(GetImmediateCommandList_ForRenderCommand(), Params, AsyncCallback);
+			DispatchRenderThread(GetImmediateCommandList_ForRenderCommand(), AsyncCallback);
 		}else{
-			DispatchGameThread(Params, AsyncCallback);
+			DispatchGameThread(AsyncCallback);
 		}
 	}
 };

@@ -43,7 +43,7 @@ struct VOXELCUT_API FMaVoxelData
 	void UpdateLeafNode(
 		FOctreeNode& LeafNode,
 		const FAxisAlignedBox3d& UpdateBounds,
-		const TFunctionRef<float(const FVector3d&)>& UpdateFunction); 
+		const TFunctionRef<float(const FVector3d&)>& UpdateFunction);
 	void UpdateRegion(const FAxisAlignedBox3d& UpdateBounds, const TFunctionRef<float(const FVector3d&)>& UpdateFunction);
 
 	// 调试

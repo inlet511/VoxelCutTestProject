@@ -13,9 +13,8 @@ public:
 	// 预计算工具网格的SDF纹理
 	bool PrecomputeSDF(
 		const FDynamicMesh3& ToolMesh,       // 固定的工具网格
-		const FTransform& ToolTransform,     // 工具的基础变换
-		int32 TextureSize = 64,             // VolumeTexture Size
-		float BoundsExpansion = 50.0f);      // 边界扩展量
+		int32 TextureSize = 64             // VolumeTexture Size
+		);
 
 	// 获取GPU可访问的SDF纹理资源
 	FTextureRHIRef GetSDFTextureRHI() const { return SDFTextureRHI; }

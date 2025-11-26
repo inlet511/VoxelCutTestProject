@@ -10,6 +10,7 @@
 #include "Generators/MarchingCubes.h"
 #include "DynamicMesh/DynamicMesh3.h"
 #include "HAL/PlatformTime.h"
+#include "VoxelCutComputePass.h"
 
 using namespace UE::Geometry;
 
@@ -151,11 +152,16 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
     FAxisAlignedBox3d ToolExtendedBounds(ExpandedMin, ExpandedMax);
 
     double EndTime1 = FPlatformTime::Seconds();
+
+    // 1. 收集受到影响的叶子节点
+    TArray<FOctreeNode*> AffectedNodes;
+    TargetVoxels.OctreeRoot.CollectAffectedNodes(ToolExtendedBounds, AffectedNodes);
+
+    // 2. 发送给GPU处理
     
-   // TODO:这里加入GPU切削
     
     double EndTime = FPlatformTime::Seconds();
-    UE_LOG(LogTemp, Warning, TEXT("局部区域更新整体耗时: %.2f 毫秒, 工具信息准备耗时：%.5f, 占比：%.5f, 更新了 %d 个体素"), (EndTime - StartTime) * 1000.0,(EndTime1-StartTime), (EndTime1 - StartTime)/(EndTime-StartTime), UpdatedVoxels);
+    //UE_LOG(LogTemp, Warning, TEXT("局部区域更新整体耗时: %.2f 毫秒, 工具信息准备耗时：%.5f, 占比：%.5f, 更新了 %d 个体素"), (EndTime - StartTime) * 1000.0,(EndTime1-StartTime), (EndTime1 - StartTime)/(EndTime-StartTime), UpdatedVoxels);
     
     // 切削后对局部区域进行高斯平滑（减少体素值突变）
     //SmoothLocalVoxels(TargetVoxels, VoxelMin, VoxelMax, 1);

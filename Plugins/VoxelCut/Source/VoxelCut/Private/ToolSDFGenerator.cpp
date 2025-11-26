@@ -9,24 +9,20 @@
 
 bool FToolSDFGenerator::PrecomputeSDF(
     const FDynamicMesh3& ToolMesh, 
-    const FTransform& ToolTransform, 
-    int32 TextureSize, 
-    float BoundsExpansion)
+    int32 TextureSize)
 {
     VolumeSize = TextureSize;
     
-    // 1. 计算工具网格在世界空间的边界
-    FDynamicMesh3 WorldToolMesh = ToolMesh;
-    MeshTransforms::ApplyTransform(WorldToolMesh, ToolTransform, true);
-    FAxisAlignedBox3d OriginalBounds = WorldToolMesh.GetBounds();
+    // 1. 计算工具网格在自身空间的边界
+    FAxisAlignedBox3d OriginalBounds = ToolMesh.GetBounds();
 
     // 扩展边界以包含足够的周边区域
-    SDFBounds.Min = OriginalBounds.Min - FVector3d(BoundsExpansion);
-    SDFBounds.Max = OriginalBounds.Max + FVector3d(BoundsExpansion);
+    SDFBounds.Min = OriginalBounds.Min;
+    SDFBounds.Max = OriginalBounds.Max;
     FVector3d SDFExtent = SDFBounds.Max - SDFBounds.Min;
 
     // 2. 创建空间查询结构（用于距离计算）
-    FDynamicMeshAABBTree3 ToolSpatial(&WorldToolMesh);
+    FDynamicMeshAABBTree3 ToolSpatial(&ToolMesh);
     TFastWindingTree<FDynamicMesh3> ToolWinding(&ToolSpatial);
 
     // 3. 初始化VolumeTexture数据
