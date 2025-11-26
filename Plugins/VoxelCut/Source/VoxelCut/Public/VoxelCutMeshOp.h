@@ -6,6 +6,7 @@
 #include "ModelingOperators.h"
 #include "BaseOps/VoxelBaseOp.h"
 #include "MaVoxelData.h"
+#include "ToolSDFGenerator.h"
 
 namespace UE
 {
@@ -19,10 +20,12 @@ namespace UE
 			// 输入：目标网格和刀具网格
 			TSharedPtr<FDynamicMesh3, ESPMode::ThreadSafe> TargetMesh;
 			TSharedPtr<const FDynamicMesh3, ESPMode::ThreadSafe> CutToolMesh;
-    
+			TSharedPtr<FToolSDFGenerator> ToolSDF;
+			
 			// 变换矩阵
 			FTransform TargetTransform;
 			FTransform CutToolTransform;
+			
     
 			// 持久化体素数据（输入/输出）
 			TSharedPtr<FMaVoxelData> PersistentVoxelData;

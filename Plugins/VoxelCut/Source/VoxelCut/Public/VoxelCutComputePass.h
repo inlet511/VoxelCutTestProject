@@ -1,13 +1,25 @@
 #pragma once 
 #include "CoreMinimal.h"
 #include "ShaderParameterStruct.h"
+#include "ToolSDFGenerator.h"
 
-struct OctreeNodeToGPU
+
+struct FlatOctreeNode
 {
 	FVector BoundsMin;
 	FVector BoundsMax;
 	float Voxels[8]; // 固定成8个体素
 };
+
+
+// 发送给Dispatch函数的参数
+struct VOXELCUT_API FVoxelCutCSParams
+{
+	TSharedPtr<FToolSDFGenerator> ToolSDF;
+	TArray<FlatOctreeNode> OctreeNodesArray;
+	FTransform ToolTransform;
+};
+
 
 // 定义Uniform Buffer,用于传递ToolTransform
 BEGIN_UNIFORM_BUFFER_STRUCT(FToolTransformUniformBuffer, )
@@ -22,8 +34,8 @@ class FVoxelCutCS: public FGlobalShader
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_TEXTURE(Texture3D, ToolSDF)
 		SHADER_PARAMETER_SAMPLER(SamplerState, ToolSDFSampler)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<OctreeNodeToGPU>, InputBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<OctreeNodeToGPU>, OutputBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FlatOctreeNode>, InputBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FlatOctreeNode>, OutputBuffer)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FToolTransformUniformBuffer, ToolTransformUniformBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -40,36 +52,31 @@ static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameter
 	}
 };
 
+
+
 // This is a public interface that we define so outside code can invoke our compute shader.
-class COMPUTESHADER_API FVoxlCutShaderInterface {
+class VOXELCUT_API FVoxlCutShaderInterface {
 public:
 	// Executes this shader on the render thread
-	static void DispatchRenderThread(
-		FRHICommandListImmediate& RHICmdList,
-		TFunction<void(int OutputVal)> AsyncCallback
-	);
+	static void DispatchRenderThread(FVoxelCutCSParams Params,FRHICommandListImmediate& RHICmdList,TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback);
 
 	// Executes this shader on the render thread from the game thread via EnqueueRenderThreadCommand
-	static void DispatchGameThread(
-		TFunction<void(int OutputVal)> AsyncCallback
-	)
+	static void DispatchGameThread(FVoxelCutCSParams Params,TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback)
 	{
 		ENQUEUE_RENDER_COMMAND(SceneDrawCompletion)(
-		[AsyncCallback](FRHICommandListImmediate& RHICmdList)
+		[Params, AsyncCallback](FRHICommandListImmediate& RHICmdList)
 		{
-			DispatchRenderThread(RHICmdList, AsyncCallback);
+			DispatchRenderThread(Params, RHICmdList, AsyncCallback);
 		});
 	}
 
 	// Dispatches this shader. Can be called from any thread
-	static void Dispatch(
-		TFunction<void(int OutputVal)> AsyncCallback
-	)
+	static void Dispatch(FVoxelCutCSParams Params, TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback)
 	{
 		if (IsInRenderingThread()) {
-			DispatchRenderThread(GetImmediateCommandList_ForRenderCommand(), AsyncCallback);
+			DispatchRenderThread(Params, GetImmediateCommandList_ForRenderCommand(), AsyncCallback);
 		}else{
-			DispatchGameThread(AsyncCallback);
+			DispatchGameThread(Params, AsyncCallback);
 		}
 	}
 };

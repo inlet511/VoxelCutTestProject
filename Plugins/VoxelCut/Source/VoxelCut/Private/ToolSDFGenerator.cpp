@@ -16,6 +16,8 @@ bool FToolSDFGenerator::PrecomputeSDF(
     // 1. 计算工具网格在自身空间的边界
     FAxisAlignedBox3d OriginalBounds = ToolMesh.GetBounds();
 
+    double MaxSize = (OriginalBounds.Max - OriginalBounds.Min).GetMax();
+
     // 扩展边界以包含足够的周边区域
     SDFBounds.Min = OriginalBounds.Min;
     SDFBounds.Max = OriginalBounds.Max;
@@ -54,7 +56,7 @@ bool FToolSDFGenerator::PrecomputeSDF(
                 if (NearestTriID == IndexConstants::InvalidID)
                 {
                     // 超出工具范围，设为最大距离
-                    SignedDist = BoundsExpansion;
+                    SignedDist = MaxSize;
                 }
                 else
                 {
@@ -65,7 +67,7 @@ bool FToolSDFGenerator::PrecomputeSDF(
                 }
 
                 // 归一化到[0,1]范围并编码为8位
-                float NormDist = FMath::Clamp(SignedDist / BoundsExpansion, -1.0f, 1.0f);
+                float NormDist = FMath::Clamp(SignedDist / MaxSize, -1.0f, 1.0f);
                 uint8 Encoded = (uint8)((NormDist + 1.0f) * 0.5f * 255.0f);
                 
                 // 计算线性索引

@@ -139,17 +139,14 @@ void UVoxelCutComponent::InitializeCutSystem()
 	}
 
 	// 初始化切割工具VolumeTexture资源
-	ToolSDFGenerator = MakeUnique<FToolSDFGenerator>();
-	bool bSuccess = ToolSDFGenerator->PrecomputeSDF(
-		*CutOp->CutToolMesh, 
-		CutToolMeshComponent->GetComponentTransform(),
-		64,
-		5.0f
-	);
+	ToolSDFGenerator = MakeShared<FToolSDFGenerator>();
+	bool bSuccess = ToolSDFGenerator->PrecomputeSDF(*CutOp->CutToolMesh,64);
 	if (bSuccess)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("工具SDF预计算完成"));
-	}	
+		// 复制到CutOp中
+		CutOp->ToolSDF = ToolSDFGenerator;
+	}
 
 	bSystemInitialized = true;
 }

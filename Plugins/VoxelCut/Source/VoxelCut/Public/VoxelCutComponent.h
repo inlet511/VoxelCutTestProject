@@ -150,7 +150,7 @@ private:
 	// 复制工具网格（轻量级操作）
 	TSharedPtr<FDynamicMesh3> CopyToolMesh();
 
-	TUniquePtr<FToolSDFGenerator> ToolSDFGenerator;
+	TSharedPtr<FToolSDFGenerator> ToolSDFGenerator;
 
 // Debug 相关信息
 	
