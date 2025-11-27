@@ -16,8 +16,8 @@ IMPLEMENT_UNIFORM_BUFFER_STRUCT(FSDFBoundsUniformBuffer, "SDFBoundsUniformBuffer
 IMPLEMENT_GLOBAL_SHADER(FVoxelCutCS,"/Project/Shaders/VoxelCutCS.usf","MainCS",SF_Compute);
 
 void FVoxlCutShaderInterface::DispatchRenderThread(
-	FVoxelCutCSParams Params,
 	FRHICommandListImmediate& RHICmdList,
+	FVoxelCutCSParams Params,	
 	TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback
 )
 {
@@ -38,15 +38,7 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 			constexpr uint32 ElementSize = sizeof(FlatOctreeNode);
 			const uint32 ArrayElementCount = Params.OctreeNodesArray.Num();
 
-			if (ArrayElementCount == 0)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Octree Array is Empty!"));
-				GraphBuilder.Execute(); // 手动提交命令列表
-				AsyncCallback(TArray<FlatOctreeNode>());
-				return;
-			}
-			// 3. 传入Input Buffer		
-
+			// 3. 传入Input Buffer
 			// 3.1 Buffer Description
 			FRDGBufferDesc InputBufferDesc = FRDGBufferDesc::CreateStructuredDesc(ElementSize, ArrayElementCount);
 			InputBufferDesc.Usage = BUF_ShaderResource | BUF_Static; // 用作SRV，数据基本不变
@@ -106,13 +98,27 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 
 
 			FRHIGPUBufferReadback* GPUBufferReadback = new FRHIGPUBufferReadback(TEXT("ExecuteVoxelCutComputeShaderOutput"));
-			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback, OutputBuffer, 0u);
-
+			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback, OutputBuffer, 0u);			
 
 			auto RunnerFunc = [GPUBufferReadback, AsyncCallback, ArrayElementCount](auto&& RunnerFunc) -> void {
-				UE_LOG(LogTemp, Warning, TEXT("Waiting for GPU Readback..."));
 
 				if (GPUBufferReadback->IsReady()) {
+
+					//// 添加更严格的大小检查
+					//const SIZE_T ExpectedSize = ArrayElementCount * ElementSize;
+					//const SIZE_T ActualSize = GPUBufferReadback->GetGPUSizeBytes();
+
+					/*if (ActualSize < ExpectedSize)
+					{
+						UE_LOG(LogTemp, Error, TEXT("GPUBufferReadback size mismatch: Expected %lld, Got %lld"),
+							ExpectedSize, ActualSize);
+						TArray<FlatOctreeNode> EmptyArray;
+						AsyncTask(ENamedThreads::GameThread, [AsyncCallback, EmptyArray]() {
+							AsyncCallback(EmptyArray);
+							});
+						delete GPUBufferReadback;
+						return;
+					}*/
 
 					// 锁定缓冲区以读取数据
 					void* LockedData = GPUBufferReadback->Lock(ArrayElementCount * ElementSize);

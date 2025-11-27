@@ -65,7 +65,7 @@ static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameter
 class VOXELCUTSHADERS_API FVoxlCutShaderInterface {
 public:
 	// Executes this shader on the render thread
-	static void DispatchRenderThread(FVoxelCutCSParams Params,FRHICommandListImmediate& RHICmdList,TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback);
+	static void DispatchRenderThread(FRHICommandListImmediate& RHICmdList, FVoxelCutCSParams Params,TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback);
 
 	// Executes this shader on the render thread from the game thread via EnqueueRenderThreadCommand
 	static void DispatchGameThread(FVoxelCutCSParams Params,TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback)
@@ -73,7 +73,7 @@ public:
 		ENQUEUE_RENDER_COMMAND(SceneDrawCompletion)(
 		[Params, AsyncCallback](FRHICommandListImmediate& RHICmdList)
 		{
-			DispatchRenderThread(Params, RHICmdList, AsyncCallback);
+			DispatchRenderThread(RHICmdList, Params, AsyncCallback);
 		});
 	}
 
@@ -81,7 +81,7 @@ public:
 	static void Dispatch(FVoxelCutCSParams Params, TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback)
 	{
 		if (IsInRenderingThread()) {
-			DispatchRenderThread(Params, GetImmediateCommandList_ForRenderCommand(), AsyncCallback);
+			DispatchRenderThread(GetImmediateCommandList_ForRenderCommand(), Params, AsyncCallback);
 		}else{
 			DispatchGameThread(Params, AsyncCallback);
 		}
