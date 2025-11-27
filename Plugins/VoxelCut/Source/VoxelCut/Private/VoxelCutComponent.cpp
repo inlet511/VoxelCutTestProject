@@ -27,7 +27,7 @@ void UVoxelCutComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (!bIsCutting || !CutToolMeshComponent || !TargetMeshComponent)
+	if (!bSystemInitialized || !bIsCutting || !CutToolMeshComponent || !TargetMeshComponent)
 		return;
 
 	// 获取当前工具位置
@@ -162,16 +162,76 @@ void UVoxelCutComponent::InitializeCutSystem()
 	}
 
 	// 初始化切割工具VolumeTexture资源
-	ToolSDFGenerator = MakeShared<FToolSDFGenerator>();
-	bool bSuccess = ToolSDFGenerator->PrecomputeSDF(*CutOp->CutToolMesh,64);
-	if (bSuccess)
+	InitToolSDFAsync(64);
+
+	//bSystemInitialized = true;
+}
+
+void UVoxelCutComponent::OnCutSystemInitialized()
+{
+	bSystemInitialized = true;
+}
+
+void UVoxelCutComponent::InitToolSDFAsync(int32 TextureSize)
+{
+	// 1. 防重复调用：如果正在预计算，直接返回
+	if (bIsPrecomputingSDF)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("工具SDF预计算完成"));
-		// 复制到CutOp中
-		CutOp->ToolSDF = ToolSDFGenerator;
+		UE_LOG(LogTemp, Warning, TEXT("SDF预计算已在进行中，跳过重复调用"));
+		return;
 	}
 
-	bSystemInitialized = true;
+	// 2. 检查前置条件（CutOp和网格不能为空）
+	if (!CutOp.IsValid() || !CutOp->CutToolMesh.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("CutOp或切割工具网格未初始化，无法预计算SDF"));
+		return;
+	}
+
+	// 3. 标记为正在预计算
+	bIsPrecomputingSDF = true;
+
+	// 4. 创建SDF生成器
+	ToolSDFGenerator = MakeShared<FToolSDFGenerator>();
+	TWeakObjectPtr<UVoxelCutComponent> WeakSelf = this;
+	// 5. 异步调用PrecomputeSDFAsync，传入回调函数
+	ToolSDFGenerator->PrecomputeSDFAsync(
+		*CutOp->CutToolMesh,  // 传入工具网格（const引用）
+		TextureSize,          // 纹理尺寸
+		[WeakSelf, this](bool bSuccess) // 回调：捕获弱引用避免循环引用
+		{
+			// 切回游戏线程执行业务逻辑（关键：避免跨线程操作CutOp）
+			AsyncTask(ENamedThreads::GameThread, [this, WeakSelf, bSuccess]()
+			{
+				// 检查组件是否还存在（防止异步过程中组件被销毁）
+				if (!WeakSelf.IsValid() || !WeakSelf.Pin())
+				{
+					return;
+				}
+
+				// 重置预计算状态
+				bIsPrecomputingSDF = false;
+
+				// 6. 处理异步结果
+				if (bSuccess)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("工具SDF预计算完成（异步）"));
+					// 复制SDF生成器到CutOp（共享指针自动管理生命周期）
+					CutOp->ToolSDF = ToolSDFGenerator;
+
+					// 切削系统初始化完成
+					OnCutSystemInitialized();
+				}
+				else
+				{
+					UE_LOG(LogTemp, Error, TEXT("工具SDF预计算失败（异步）"));
+					// 失败时释放无效的生成器
+					ToolSDFGenerator.Reset();
+					CutOp->ToolSDF.Reset();
+				}
+			});
+		}
+	);
 }
 
 bool UVoxelCutComponent::NeedsCutUpdate(const FTransform& InCurrentToolTransform)

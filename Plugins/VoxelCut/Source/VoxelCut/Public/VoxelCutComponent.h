@@ -8,6 +8,7 @@
 #include "VoxelCutMeshOp.h"
 #include "Components/DynamicMeshComponent.h"
 #include "ToolSDFGenerator.h"
+#include "UObject/WeakObjectPtr.h" 
 #include "VoxelCutComponent.generated.h"
 
 using namespace UE::Geometry;
@@ -52,6 +53,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
 	void StopCutting();
 
+	// 初始化切削系统
+	void InitializeCutSystem();
+
+	// 切削系统初始化完成
+	void OnCutSystemInitialized();
+	
+	// 初始化切削工具的SDF
+	UFUNCTION(BlueprintCallable, Category = "VoxelCut")
+	void InitToolSDFAsync(int32 TextureSize = 64);
+
+
+	
 	// 切削参数
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
 	bool bSmoothEdges = true;
@@ -75,18 +88,13 @@ public:
 	bool bFillHoles = true;
     
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Cut")
-	float UpdateThreshold = 1.0f;
-
-	// 切削状态
-	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	bool IsCutting() const { return bIsCutting; }
+	float UpdateThreshold = 1.0f;	
 	
 	// 获取切削结果网格
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
 	UDynamicMeshComponent* GetResultMesh() const { return TargetMeshComponent; }
 
-	// 初始化切削系统
-	void InitializeCutSystem();
+
 	
 protected:
 	// Called when the game starts
@@ -133,7 +141,7 @@ private:
     
 
 
-	bool bSystemInitialized = false;
+	
     
 	// 检查是否需要更新切削
 	bool NeedsCutUpdate(const FTransform& InCurrentToolTransform);
@@ -154,6 +162,14 @@ private:
 	TSharedPtr<FDynamicMesh3> CopyToolMesh();
 
 	TSharedPtr<FToolSDFGenerator> ToolSDFGenerator;
+
+	// 异步状态标记：是否正在预计算SDF
+	bool bIsPrecomputingSDF = false;
+
+	
+	// 切削系统是否已经初始化
+	bool bSystemInitialized = false;
+
 
 // Debug 相关信息
 	
