@@ -161,12 +161,30 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
         return;
     
     TArray<FlatOctreeNode> FlatOctreeNodes;
-    FlatOctreeNodes.Reserve(NodeCount);
+    FlatOctreeNodes.SetNum(NodeCount);
+    // 现在可以安全访问下标
     for (uint32 i = 0; i < NodeCount; i++)
     {
+        // 赋值边界
         FlatOctreeNodes[i].BoundsMax = AffectedNodes[i]->Bounds.Max;
         FlatOctreeNodes[i].BoundsMin = AffectedNodes[i]->Bounds.Min;
-        FMemory::Memcpy(FlatOctreeNodes[i].Voxels, AffectedNodes[i]->Voxels, sizeof(float) * 8);
+    
+        // 安全拷贝Voxels数组（确保源数据有效）
+        if (AffectedNodes[i] != nullptr)
+        {
+            // 拷贝8个float（匹配Voxels[8]的大小）
+            FMemory::Memcpy(
+                FlatOctreeNodes[i].Voxels,    // 目标：当前元素的Voxels数组
+                AffectedNodes[i]->Voxels,    // 源：AffectedNodes的Voxels数组
+                sizeof(float) * 8            // 固定大小：8个float
+            );
+        }
+        else
+        {
+            // 兜底：源节点为空时清空Voxels
+            FMemory::Memzero(FlatOctreeNodes[i].Voxels, sizeof(float) * 8);
+            UE_LOG(LogTemp, Warning, TEXT("AffectedNodes[%d]为空，跳过Voxels拷贝"), i);
+        }
     }
     // 2. 发送给GPU处理
     FVoxelCutCSParams Params;

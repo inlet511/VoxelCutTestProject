@@ -93,46 +93,92 @@ void FToolSDFGenerator::ComputeSDFData(TUniquePtr<FComputeData> Data)
 void FToolSDFGenerator::CreateTextureOnRenderThread(TUniquePtr<FComputeData> Data)
 {
     check(IsInRenderingThread());
+    check(Data.IsValid());
 
-    // 创建纹理描述
-    FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create3D(TEXT("ToolSDFVolumeTexture"))
-        .SetExtent(Data->TextureSize)
-        .SetFormat(PF_R16_SINT)
-        .SetNumMips(1)
-        .SetFlags(ETextureCreateFlags::ShaderResource)
-        .SetInitialState(ERHIAccess::SRVMask);
+    const int32 TextureSize = Data->TextureSize;
+    const int32 TotalVoxels = TextureSize * TextureSize * TextureSize;
+    const int32 BytesPerVoxel = sizeof(int16); // 每个体素是int16，2字节
+    const int32 TotalBytes = TotalVoxels * BytesPerVoxel; 
 
-    // 复制体积数据到渲染线程可访问的内存
-    TArray<int16> SDFVolumeData = MoveTemp(Data->VolumeData);
-
-    // 创建包含初始数据的批量数据对象
-    struct FSDFBulkData : public FResourceBulkDataInterface
+    // 1. 验证数据有效性
+    if (Data->VolumeData.Num() != TotalVoxels || TotalBytes <= 0)
     {
-        FSDFBulkData(TArray<int16>&& InData) : Data(MoveTemp(InData)) {}
-        
-        virtual const void* GetResourceBulkData() const override { return Data.GetData(); }
-        virtual uint32 GetResourceBulkDataSize() const override { return Data.Num() * sizeof(int16); }
-        virtual void Discard() override {}
-        
-    private:
-        TArray<int16> Data;
-    };
+        UE_LOG(LogTemp, Error, TEXT("SDF数据无效：期望%d个体素，实际%d个"), TotalVoxels, Data->VolumeData.Num());
+        if (Data->CompleteCallback)
+        {
+            AsyncTask(ENamedThreads::GameThread, [CompleteCallback = MoveTemp(Data->CompleteCallback)]()
+            {
+                CompleteCallback(false);
+            });
+        }
+        return;
+    }
+    
+    // 2. 计算D3D12纹理数据布局参数
+    const uint32 SourceRowPitch = TextureSize * BytesPerVoxel;       // 一行（X）的字节数
+    const uint32 SourceDepthPitch = SourceRowPitch * TextureSize;    // 一层（X*Y）的字节数
 
-    TextureDesc.SetBulkData(new FSDFBulkData(MoveTemp(SDFVolumeData)));
+    // 2. 创建空的3D纹理（无初始BulkData）
+    FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create3D(TEXT("ToolSDFVolumeTexture"),
+        FIntVector(TextureSize,TextureSize,TextureSize),
+        PF_R16_SINT)
+        .SetNumMips(1)
+        .SetFlags(ETextureCreateFlags::ShaderResource | ETextureCreateFlags::CPUWritable) // 允许CPU更新
+        .SetInitialState(ERHIAccess::CopyDest);                      // 初始状态为拷贝目标
 
-    // 创建纹理资源
     FTextureRHIRef NewTextureRHI = RHICreateTexture(TextureDesc);
+    if (!NewTextureRHI.IsValid())
+    {
+        UE_LOG(LogTemp, Error, TEXT("创建SDF 3D纹理失败"));
+        if (Data->CompleteCallback)
+        {
+            AsyncTask(ENamedThreads::GameThread, [CompleteCallback = MoveTemp(Data->CompleteCallback)]()
+            {
+                CompleteCallback(false);
+            });
+        }
+        return;
+    }
 
-    // 线程安全地更新成员变量
-    FScopeLock Lock(&TextureCritical);
-    SDFTextureRHI = NewTextureRHI;
-    SDFBounds = Data->Bounds;
-    VolumeSize = Data->TextureSize;
+    // 3. 通过RHICmdList上传数据（D3D12推荐方式）
+    FRHICommandListImmediate& RHICmdList = FRHICommandListExecutor::GetImmediateCommandList();
+    
+    // 准备数据指针（确保是连续内存）
+    const uint8* SDFDataPtr = reinterpret_cast<const uint8*>(Data->VolumeData.GetData());
+    const FUpdateTextureRegion3D UpdateRegion(
+        0, 0, 0,                    // 起始X/Y/Z
+        0, 0, 0,                    // 起始Mip/Array/Slice
+        TextureSize, TextureSize, TextureSize // 宽度/高度/深度
+    );
 
-    // 通知完成（回调在游戏线程执行）
+    // 上传数据到纹理
+    RHICmdList.UpdateTexture3D(
+        NewTextureRHI,              // 目标纹理
+        0,                          // Mip层级
+        UpdateRegion,              
+        SourceRowPitch,            
+        SourceDepthPitch,
+        SDFDataPtr
+    );
+
+    // 4. 将纹理状态切换为Shader可读
+    RHICmdList.Transition(FRHITransitionInfo(
+        NewTextureRHI,
+        ERHIAccess::CopyDest,
+        ERHIAccess::SRVMask
+    ));
+
+    // 5. 线程安全更新成员变量
+    {
+        FScopeLock Lock(&TextureCritical);
+        SDFTextureRHI = NewTextureRHI;
+        SDFBounds = Data->Bounds;
+        VolumeSize = TextureSize;
+    }
+
+    // 6. 通知完成（游戏线程）
     if (Data->CompleteCallback)
     {
-        // 如果需要在游戏线程执行回调，使用AsyncTask切换
         AsyncTask(ENamedThreads::GameThread, [CompleteCallback = MoveTemp(Data->CompleteCallback), NewTextureRHI]()
         {
             CompleteCallback(NewTextureRHI.IsValid());
