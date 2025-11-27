@@ -3,7 +3,6 @@
 #include "ShaderParameterStruct.h"
 #include "ToolSDFGenerator.h"
 
-
 struct FlatOctreeNode
 {
 	FVector BoundsMin;
@@ -13,7 +12,7 @@ struct FlatOctreeNode
 
 
 // 发送给Dispatch函数的参数
-struct VOXELCUT_API FVoxelCutCSParams
+struct VOXELCUTSHADERS_API FVoxelCutCSParams
 {
 	TSharedPtr<FToolSDFGenerator> ToolSDF;
 	TArray<FlatOctreeNode> OctreeNodesArray;
@@ -30,6 +29,7 @@ END_UNIFORM_BUFFER_STRUCT()
 BEGIN_UNIFORM_BUFFER_STRUCT(FSDFBoundsUniformBuffer, )
 	SHADER_PARAMETER(FVector3f, SDFBoundsMin)
 	SHADER_PARAMETER(FVector3f, SDFBoundsMax)
+	SHADER_PARAMETER(int32, VolumeTextureSize)
 END_UNIFORM_BUFFER_STRUCT()
 
 class FVoxelCutCS: public FGlobalShader
@@ -62,7 +62,7 @@ static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameter
 
 
 // This is a public interface that we define so outside code can invoke our compute shader.
-class VOXELCUT_API FVoxlCutShaderInterface {
+class VOXELCUTSHADERS_API FVoxlCutShaderInterface {
 public:
 	// Executes this shader on the render thread
 	static void DispatchRenderThread(FVoxelCutCSParams Params,FRHICommandListImmediate& RHICmdList,TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback);

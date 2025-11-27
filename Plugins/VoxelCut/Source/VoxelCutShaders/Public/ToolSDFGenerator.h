@@ -2,11 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "DynamicMesh/DynamicMesh3.h"
-#include "RenderResource.h"
 
 using namespace UE::Geometry;
 
-class VOXELCUT_API FToolSDFGenerator
+class VOXELCUTSHADERS_API FToolSDFGenerator
 {
 public:
 	// 预计算工具网格的SDF纹理（异步执行）

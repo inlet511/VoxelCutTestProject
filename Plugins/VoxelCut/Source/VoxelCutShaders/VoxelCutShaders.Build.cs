@@ -2,9 +2,9 @@
 
 using UnrealBuildTool;
 
-public class VoxelCut : ModuleRules
+public class VoxelCutShaders : ModuleRules
 {
-	public VoxelCut(ReadOnlyTargetRules Target) : base(Target)
+	public VoxelCutShaders(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
@@ -26,8 +26,7 @@ public class VoxelCut : ModuleRules
 			new string[]
 			{
 				"Core",
-				"GeometryCore",
-				"VoxelCutShaders"
+				"GeometryCore"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -38,16 +37,10 @@ public class VoxelCut : ModuleRules
 			{
 				"CoreUObject",
 				"Engine",
-				"Slate",
-				"SlateCore",
-				"PhysicsCore",
-				"GeometryScriptingCore",
-				"ModelingOperators",
 				"Renderer",
 				"RenderCore",
 				"RHI",
-				"Projects",
-				"GeometryFramework"
+				"Projects"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

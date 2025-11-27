@@ -9,15 +9,9 @@ struct FlatOctreeNode
 	float Voxels[8];
 };
 
-// 工具变换矩阵（从C++传递的UniformBuffer）
-cbuffer ToolTransformUniformBuffer : register(b0)
-{
-	float4x4 ToolTransform;
-};
-
 // 输入/输出缓冲区
-StructuredBuffer<FlatOctreeNode> InputBuffer : register(t0);
-RWStructuredBuffer<FlatOctreeNode> OutputBuffer : register(u0);
+StructuredBuffer<FlatOctreeNode> InputBuffer;
+RWStructuredBuffer<FlatOctreeNode> OutputBuffer;
 
 
 // SDF纹理及采样器
@@ -32,9 +26,8 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	FlatOctreeNode Node = InputBuffer[NodeIndex];
 
 	// 计算节点的中心点和尺寸
-	float3 NodeCenter = (Node.BoundsMin + Node.BoundsMax) * 0.5;
 	float3 NodeExtent = Node.BoundsMax - Node.BoundsMin;
-	float3 VoxelStep = NodeExtent / 1.0; // 2x2x2体素的步长（每个维度分2段）
+	float3 VoxelStep = NodeExtent;
 
 	// 遍历8个体素（2x2x2网格）
 	for (int i = 0; i < 8; i++)
@@ -50,17 +43,28 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		float3 VoxelWorldPos = Node.BoundsMin + VoxelLocalPos * VoxelStep;
 
 		// 1. 将体素世界坐标转换到工具的局部空间
-		float4 VoxelToolLocal = mul(float4(VoxelWorldPos, 1.0), inverse(ToolTransform));
+		float4 VoxelToolLocal = mul(float4(VoxelWorldPos, 1.0), ToolTransformUniformBuffer.ToolTransform);
 		float3 VoxelToolPos = VoxelToolLocal.xyz;
 
-		// 2. 计算SDF纹理的UVW坐标（将工具局部空间位置映射到[0,1]范围）
-		// SDF纹理的边界信息在C++中已通过FToolSDFGenerator预处理
-		// 这里假设SDF的有效范围是工具网格的边界，通过纹理采样自动 clamp
-		float3 SDFUVW = VoxelToolPos; // 实际使用时可能需要根据SDFBounds进行归一化
+		bool bInBounds =
+			VoxelToolPos.x >= SDFBoundsUniformBuffer.SDFBoundsMin.x && VoxelToolPos.x <= SDFBoundsUniformBuffer.SDFBoundsMax.x &&
+			VoxelToolPos.y >= SDFBoundsUniformBuffer.SDFBoundsMin.y && VoxelToolPos.y <= SDFBoundsUniformBuffer.SDFBoundsMax.y &&
+			VoxelToolPos.z >= SDFBoundsUniformBuffer.SDFBoundsMin.z && VoxelToolPos.z <= SDFBoundsUniformBuffer.SDFBoundsMax.z;
+		if (!bInBounds)
+			continue;
 
+		// 2. 计算SDF纹理的UVW坐标（将工具局部空间位置映射到[0,1]范围）
+		// 计算UVW（使用UniformBuffer中的VolumeTextureSize）
+		float3 SDFExtent = SDFBoundsUniformBuffer.SDFBoundsMax - SDFBoundsUniformBuffer.SDFBoundsMin;
+		float3 SDFUVW = (VoxelToolPos - SDFBoundsUniformBuffer.SDFBoundsMin) / SDFExtent;
+
+		int3 SDFTexCoord = int3(SDFUVW * SDFBoundsUniformBuffer.VolumeTextureSize);
+		SDFTexCoord = clamp(SDFTexCoord, int3(0,0,0), int3(SDFBoundsUniformBuffer.VolumeTextureSize - 1, SDFBoundsUniformBuffer.VolumeTextureSize - 1, SDFBoundsUniformBuffer.VolumeTextureSize - 1));
+		
 		// 采样原始带符号距离（无需解码）
-		int16 RawSDF = ToolSDF.SampleLevel(ToolSDFSampler, SDFUVW, 0).r;
-		float SignedDist = (float)RawSDF;  // 直接转换为浮点值
+		int RawSDF_Int = ToolSDF.Load(int4(SDFTexCoord, 0)).r; // Load直接读整数，无需归一化
+		half RawSDF = (half)RawSDF_Int; // 转换为16位有符号整数
+		float SignedDist = (float)RawSDF; // 转换为浮点值
 
 		// 4. 判断体素是否在工具内部（SDF < 0表示内部）
 		if (SignedDist < 0.0)

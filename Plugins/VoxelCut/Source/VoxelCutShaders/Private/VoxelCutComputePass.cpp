@@ -33,6 +33,12 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 		constexpr uint32 ElementSize = sizeof(FlatOctreeNode);
 		const uint32 ArrayElementCount = Params.OctreeNodesArray.Num();
 
+		if (ArrayElementCount == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Octree Array is Empty!"));
+			AsyncCallback(TArray<FlatOctreeNode>());
+			return;
+		}
 		// 3. 传入Input Buffer		
 
 		// 3.1 Buffer Description
@@ -67,13 +73,17 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 
 		// 5. 传入UniformBuffer
 		//  5.1 传递ToolTransform Uniform Buffer
-		auto* ToolTransformUniformBuffer = GraphBuilder.AllocObject<FToolTransformUniformBuffer>();
-		ToolTransformUniformBuffer->ToolTransform = FMatrix44f(Params.ToolTransform.ToMatrixWithScale()); // 假设Params中有这个数据
+		auto* ToolTransformUBParameters = GraphBuilder.AllocParameters<FToolTransformUniformBuffer>();
+		FTransform InverseTransform = Params.ToolTransform.Inverse(); // 直接传进去inverse Transform, shader中不好计算inverse
+		ToolTransformUBParameters->ToolTransform = FMatrix44f(InverseTransform.ToMatrixWithScale());
+		TRDGUniformBufferRef<FToolTransformUniformBuffer> ToolTransformUB = GraphBuilder.CreateUniformBuffer(ToolTransformUBParameters);
+		PassParameters->ToolTransformUniformBuffer = ToolTransformUB;
 
 		// 5.2 传递SDF边界 UniformBuffer
 		auto* SDFBoundsUniformBuffer = GraphBuilder.AllocParameters<FSDFBoundsUniformBuffer>();
 		SDFBoundsUniformBuffer->SDFBoundsMin = FVector3f(Params.ToolSDF->GetSDFBounds().Min);
 		SDFBoundsUniformBuffer->SDFBoundsMax = FVector3f(Params.ToolSDF->GetSDFBounds().Max);
+		SDFBoundsUniformBuffer->VolumeTextureSize = Params.ToolSDF->GetVolumeSize();
 		TRDGUniformBufferRef<FSDFBoundsUniformBuffer> SDFBoundsBuffer = GraphBuilder.CreateUniformBuffer(SDFBoundsUniformBuffer);
 		PassParameters->SDFBoundsUniformBuffer = SDFBoundsBuffer;
 
