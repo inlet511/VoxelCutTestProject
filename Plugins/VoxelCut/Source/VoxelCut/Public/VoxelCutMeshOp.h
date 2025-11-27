@@ -83,6 +83,9 @@ namespace UE
 			// 平滑模型
 			void SmoothGeneratedMesh(FDynamicMesh3& Mesh, int32 Iterations);
 
+			// 受到影响的八叉树节点列表
+			TArray<FOctreeNode*> AffectedNodes;
+
 		};
 	}
 }

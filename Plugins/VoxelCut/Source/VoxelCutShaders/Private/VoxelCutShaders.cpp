@@ -7,8 +7,8 @@
 
 void FVoxelCutShadersModule::StartupModule()
 {
-	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("VoxelCut"))->GetBaseDir(), TEXT("Shaders"));
-	AddShaderSourceDirectoryMapping(TEXT("/Project/Shaders"),PluginShaderDir);
+	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("VoxelCut"))->GetBaseDir(), TEXT("Shaders"));	
+    AddShaderSourceDirectoryMapping(TEXT("/Project/Shaders"), PluginShaderDir);    
 }
 
 void FVoxelCutShadersModule::ShutdownModule()

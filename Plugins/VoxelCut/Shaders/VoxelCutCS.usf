@@ -15,13 +15,14 @@ RWStructuredBuffer<FlatOctreeNode> OutputBuffer;
 
 
 // SDF纹理及采样器
-Texture3D ToolSDF : register(t1);
-SamplerState ToolSDFSampler : register(s0);
+Texture3D ToolSDF;
+SamplerState ToolSDFSampler;
 
 // 线程组大小（与C++中定义的THREADS_X/Y/Z一致）
-[numthreads(8, 1, 1)]
+[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
 void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
+	/*
 	uint NodeIndex = DispatchThreadId.x;
 	FlatOctreeNode Node = InputBuffer[NodeIndex];
 
@@ -76,4 +77,5 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// 写入输出缓冲区
 	OutputBuffer[NodeIndex] = Node;
+*/
 }

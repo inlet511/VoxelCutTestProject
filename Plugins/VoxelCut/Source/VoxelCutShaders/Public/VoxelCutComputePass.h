@@ -86,5 +86,6 @@ public:
 			DispatchGameThread(Params, AsyncCallback);
 		}
 	}
+
 };
 

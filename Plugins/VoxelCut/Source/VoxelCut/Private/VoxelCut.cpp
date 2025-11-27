@@ -6,9 +6,7 @@
 #define LOCTEXT_NAMESPACE "FVoxelCutModule"
 
 void FVoxelCutModule::StartupModule()
-{
-	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("VoxelCut"))->GetBaseDir(), TEXT("Shaders"));
-	AddShaderSourceDirectoryMapping(TEXT("/Project/Shaders"),PluginShaderDir);
+{	
 }
 
 void FVoxelCutModule::ShutdownModule()
