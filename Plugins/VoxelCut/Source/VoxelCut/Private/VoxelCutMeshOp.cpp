@@ -147,15 +147,15 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 	// 切削工具的扩展边界
 	FAxisAlignedBox3d OriginalBounds = ToolMesh.GetBounds();
 	FAxisAlignedBox3d TransformedBounds(OriginalBounds, ToolTransform);
-	FVector3d ExpandedMin = OriginalBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
-	FVector3d ExpandedMax = OriginalBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
+	FVector3d ExpandedMin = TransformedBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
+	FVector3d ExpandedMax = TransformedBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
 	FAxisAlignedBox3d ToolExtendedBounds(ExpandedMin, ExpandedMax);
 
 	double EndTime1 = FPlatformTime::Seconds();
 
 	// 1. 收集受到影响的叶子节点
 	AffectedNodes.Empty();
-	TargetVoxels.OctreeRoot.CollectAffectedNodes(ToolExtendedBounds, AffectedNodes);
+	TargetVoxels.OctreeRoot.CollectAffectedNodes(TransformedBounds, AffectedNodes);
 	uint32 NodeCount = AffectedNodes.Num();
 	if (NodeCount == 0)
 		return;
