@@ -41,7 +41,7 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 			// 3. 传入Input Buffer
 			// 3.1 Buffer Description
 			FRDGBufferDesc InputBufferDesc = FRDGBufferDesc::CreateStructuredDesc(ElementSize, ArrayElementCount);
-			InputBufferDesc.Usage = BUF_ShaderResource | BUF_Static; // 用作SRV，数据基本不变
+
 
 			// 3.2 创建Buffer
 			FRDGBufferRef InputBuffer = GraphBuilder.CreateBuffer(InputBufferDesc, TEXT("InputBuffer"));
@@ -61,7 +61,6 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 
 			// 4.1 创建输出缓冲区（与输入缓冲区相同结构）
 			FRDGBufferDesc OutputBufferDesc = FRDGBufferDesc::CreateStructuredDesc(ElementSize, ArrayElementCount);
-			OutputBufferDesc.Usage = BUF_UnorderedAccess | BUF_SourceCopy; // 输出缓冲区需要UAV支持
 			// 4.2 创建Buffer
 			FRDGBufferRef OutputBuffer = GraphBuilder.CreateBuffer(OutputBufferDesc, TEXT("OutputBuffer"));
 			// 4.3 把输入Buffer拷贝到输出Buffer

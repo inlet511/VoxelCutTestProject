@@ -22,7 +22,7 @@ SamplerState ToolSDFSampler;
 [numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
 void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	/*
+	
 	uint NodeIndex = DispatchThreadId.x;
 	FlatOctreeNode Node = InputBuffer[NodeIndex];
 
@@ -77,5 +77,5 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// 写入输出缓冲区
 	OutputBuffer[NodeIndex] = Node;
-*/
+
 }
