@@ -26,7 +26,7 @@ namespace UE
 			// 输入：目标网格和刀具网格
 			TSharedPtr<FDynamicMesh3, ESPMode::ThreadSafe> TargetMesh;
 			TSharedPtr<const FDynamicMesh3, ESPMode::ThreadSafe> CutToolMesh;
-			TSharedPtr<FToolSDFGenerator> ToolSDF;
+			TSharedPtr<FToolSDFGenerator> ToolSDFGenerator;
 			
 			// 变换矩阵
 			FTransform TargetTransform;

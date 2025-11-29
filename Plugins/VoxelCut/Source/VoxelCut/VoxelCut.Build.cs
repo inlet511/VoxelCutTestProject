@@ -6,7 +6,12 @@ public class VoxelCut : ModuleRules
 {
 	public VoxelCut(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+        // 启用C++异常处理
+        bEnableExceptions = true;
+        // 启用运行时类型信息(RTTI)
+        bUseRTTI = true;
+
+        PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
 		PublicIncludePaths.AddRange(
 			new string[] {

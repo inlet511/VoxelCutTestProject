@@ -3,6 +3,8 @@
 #include "ShaderParameterStruct.h"
 #include "ToolSDFGenerator.h"
 
+#define THREADS_X 64
+
 struct FlatOctreeNode
 {
 	FVector BoundsMin;
@@ -14,23 +16,20 @@ struct FlatOctreeNode
 // 发送给Dispatch函数的参数
 struct VOXELCUTSHADERS_API FVoxelCutCSParams
 {
-	TSharedPtr<FToolSDFGenerator> ToolSDF;
+	TSharedPtr<FToolSDFGenerator> ToolSDFGenerator;
 	TArray<FlatOctreeNode> OctreeNodesArray;
 	FTransform ToolTransform;
 };
 
 
 // 定义ToolTransform UniformBuffer,用于传递ToolTransform
-BEGIN_UNIFORM_BUFFER_STRUCT(FToolTransformUniformBuffer, )
-	SHADER_PARAMETER(FMatrix44f, ToolTransform)
-END_UNIFORM_BUFFER_STRUCT()
-
-// 添加SDF边界UniformBuffer定义
-BEGIN_UNIFORM_BUFFER_STRUCT(FSDFBoundsUniformBuffer, )
-	SHADER_PARAMETER(FVector3f, SDFBoundsMin)
-	SHADER_PARAMETER(FVector3f, SDFBoundsMax)
+BEGIN_UNIFORM_BUFFER_STRUCT(FToolUB, )
+	SHADER_PARAMETER(FMatrix44f, ToolInverseTransform)
+	SHADER_PARAMETER(FVector3f, ToolBoundsLocalMin)
+	SHADER_PARAMETER(FVector3f, ToolBoundsLocalMax)
 	SHADER_PARAMETER(int32, VolumeTextureSize)
 END_UNIFORM_BUFFER_STRUCT()
+
 
 class FVoxelCutCS: public FGlobalShader
 {
@@ -38,12 +37,11 @@ class FVoxelCutCS: public FGlobalShader
 	SHADER_USE_PARAMETER_STRUCT(FVoxelCutCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_TEXTURE(Texture3D<int16>, ToolSDF)
+		SHADER_PARAMETER_TEXTURE(Texture3D<float>, ToolSDF)
 		SHADER_PARAMETER_SAMPLER(SamplerState, ToolSDFSampler)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FlatOctreeNode>, InputBuffer)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<FlatOctreeNode>, OutputBuffer)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FToolTransformUniformBuffer, ToolTransformUniformBuffer)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSDFBoundsUniformBuffer, SDFBoundsUniformBuffer)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FToolUB, ToolUB)
 	END_SHADER_PARAMETER_STRUCT()
 
 
@@ -53,7 +51,7 @@ static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameter
 
 		const FPermutationDomain PermutationVector(Parameters.PermutationId);
 		
-		OutEnvironment.SetDefine(TEXT("THREADS_X"), 8);
+		OutEnvironment.SetDefine(TEXT("THREADS_X"), THREADS_X);
 		OutEnvironment.SetDefine(TEXT("THREADS_Y"), 1);
 		OutEnvironment.SetDefine(TEXT("THREADS_Z"), 1);		
 	}

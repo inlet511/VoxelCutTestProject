@@ -6,12 +6,12 @@
 #include "UniformBuffer.h"
 #include "RHICommandList.h"
 #include "RHIGPUReadback.h"
+//#include "IRenderDocPlugin.h"
 
 UE_DISABLE_OPTIMIZATION
 
 // 实现UNIFORM_BUFFER
-IMPLEMENT_UNIFORM_BUFFER_STRUCT(FToolTransformUniformBuffer, "ToolTransformUniformBuffer");
-IMPLEMENT_UNIFORM_BUFFER_STRUCT(FSDFBoundsUniformBuffer, "SDFBoundsUniformBuffer");
+IMPLEMENT_UNIFORM_BUFFER_STRUCT(FToolUB, "ToolUB");
 // 实现Global Shader
 IMPLEMENT_GLOBAL_SHADER(FVoxelCutCS,"/Project/Shaders/VoxelCutCS.usf","MainCS",SF_Compute);
 
@@ -21,19 +21,29 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 	TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback
 )
 {
+	// 开始捕获
+	//if (IRenderDocPlugin* RenderDocModule = &FModuleManager::LoadModuleChecked<IRenderDocModule>("RenderDoc"))
+	//{
+	//	RenderDocModule->StartFrameCapture();
+	//}
+
 	FRDGBuilder GraphBuilder(RHICmdList);
 	{
 		// 获取ComputeShader
 		TShaderMapRef<FVoxelCutCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
 
 		bool bIsShaderValid = ComputeShader.IsValid();
+
+		//BEGIN_RDG_EVENT(GraphBuilder, "VoxelCutComputeShader");
+
 		if (bIsShaderValid)
 		{
 			// 1. 初始化参数
 			FVoxelCutCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FVoxelCutCS::FParameters>();
 
 			// 2. 传入SDF参数
-			PassParameters->ToolSDF = Params.ToolSDF->GetSDFTextureRHI();
+			PassParameters->ToolSDF = Params.ToolSDFGenerator->GetSDFTextureRHI();
+			PassParameters->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Mirror, AM_Mirror>::GetRHI();
 
 			constexpr uint32 ElementSize = sizeof(FlatOctreeNode);
 			const uint32 ArrayElementCount = Params.OctreeNodesArray.Num();
@@ -69,22 +79,16 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 			PassParameters->OutputBuffer = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputBuffer, PF_Unknown));
 
 			// 5. 传入UniformBuffer
-			//  5.1 传递ToolTransform Uniform Buffer
-			auto* ToolTransformUBParameters = GraphBuilder.AllocParameters<FToolTransformUniformBuffer>();
+			auto* ToolUBParameters = GraphBuilder.AllocParameters<FToolUB>();
 			FTransform InverseTransform = Params.ToolTransform.Inverse(); // 直接传进去inverse Transform, shader中不好计算inverse
-			ToolTransformUBParameters->ToolTransform = FMatrix44f(InverseTransform.ToMatrixWithScale());
-			TRDGUniformBufferRef<FToolTransformUniformBuffer> ToolTransformUB = GraphBuilder.CreateUniformBuffer(ToolTransformUBParameters);
-			PassParameters->ToolTransformUniformBuffer = ToolTransformUB;
+			ToolUBParameters->ToolInverseTransform = FMatrix44f(InverseTransform.ToMatrixWithScale());
+			ToolUBParameters->ToolBoundsLocalMin = FVector3f(Params.ToolSDFGenerator->GetSDFBounds().Min);
+			ToolUBParameters->ToolBoundsLocalMax = FVector3f(Params.ToolSDFGenerator->GetSDFBounds().Max);
+			ToolUBParameters->VolumeTextureSize = Params.ToolSDFGenerator->GetVolumeSize();
+			TRDGUniformBufferRef<FToolUB> ToolUB = GraphBuilder.CreateUniformBuffer(ToolUBParameters);
+			PassParameters->ToolUB = ToolUB;
 
-			// 5.2 传递SDF边界 UniformBuffer
-			auto* SDFBoundsUniformBuffer = GraphBuilder.AllocParameters<FSDFBoundsUniformBuffer>();
-			SDFBoundsUniformBuffer->SDFBoundsMin = FVector3f(Params.ToolSDF->GetSDFBounds().Min);
-			SDFBoundsUniformBuffer->SDFBoundsMax = FVector3f(Params.ToolSDF->GetSDFBounds().Max);
-			SDFBoundsUniformBuffer->VolumeTextureSize = Params.ToolSDF->GetVolumeSize();
-			TRDGUniformBufferRef<FSDFBoundsUniformBuffer> SDFBoundsBuffer = GraphBuilder.CreateUniformBuffer(SDFBoundsUniformBuffer);
-			PassParameters->SDFBoundsUniformBuffer = SDFBoundsBuffer;
-
-			FIntVector GroupCount(FMath::DivideAndRoundUp<int>(ArrayElementCount, 64), 1, 1);
+			FIntVector GroupCount(FMath::DivideAndRoundUp<int>(ArrayElementCount, THREADS_X), 1, 1);
 
 			GraphBuilder.AddPass(
 				RDG_EVENT_NAME("ExecuteVoxelCuteComputeShader"),
@@ -103,21 +107,7 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 
 				if (GPUBufferReadback->IsReady()) {
 
-					//// 添加更严格的大小检查
-					//const SIZE_T ExpectedSize = ArrayElementCount * ElementSize;
-					//const SIZE_T ActualSize = GPUBufferReadback->GetGPUSizeBytes();
 
-					/*if (ActualSize < ExpectedSize)
-					{
-						UE_LOG(LogTemp, Error, TEXT("GPUBufferReadback size mismatch: Expected %lld, Got %lld"),
-							ExpectedSize, ActualSize);
-						TArray<FlatOctreeNode> EmptyArray;
-						AsyncTask(ENamedThreads::GameThread, [AsyncCallback, EmptyArray]() {
-							AsyncCallback(EmptyArray);
-							});
-						delete GPUBufferReadback;
-						return;
-					}*/
 
 					// 锁定缓冲区以读取数据
 					void* LockedData = GPUBufferReadback->Lock(ArrayElementCount * ElementSize);
@@ -157,9 +147,17 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 				RunnerFunc(RunnerFunc);
 				});
 		}
+
+		//END_RDG_EVENT(GraphBuilder, "VoxelCutComputeShader");
 	}
 
 	GraphBuilder.Execute();
+
+	// 结束捕获
+	//if (IRenderDocModule* RenderDocModule = &FModuleManager::LoadModuleChecked<IRenderDocModule>("RenderDoc"))
+	//{
+	//	RenderDocModule->EndFrameCapture();
+	//}
 }
 
 UE_ENABLE_OPTIMIZATION

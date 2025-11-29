@@ -71,11 +71,11 @@ void FToolSDFGenerator::ComputeSDFData(TUniquePtr<FComputeData> Data)
                 }
 
                 // 编码距离值
-                int16 Encoded = (int16)FMath::Clamp(SignedDist, -32767.0f, 32767.0f);
+                //int16 Encoded = (int16)FMath::Clamp(SignedDist, -32767.0f, 32767.0f);
                 int32 Index = Z * (Data->TextureSize * Data->TextureSize) + Y * Data->TextureSize + X;
                 if (Index < TotalVoxels) // 边界检查
                 {
-                    Data->VolumeData[Index] = Encoded;
+                    Data->VolumeData[Index] = SignedDist;
                 }
             }
         }
@@ -97,7 +97,7 @@ void FToolSDFGenerator::CreateTextureOnRenderThread(TUniquePtr<FComputeData> Dat
 
     const int32 TextureSize = Data->TextureSize;
     const int32 TotalVoxels = TextureSize * TextureSize * TextureSize;
-    const int32 BytesPerVoxel = sizeof(int16); // 每个体素是int16，2字节
+    const int32 BytesPerVoxel = sizeof(float);
     const int32 TotalBytes = TotalVoxels * BytesPerVoxel; 
 
     // 1. 验证数据有效性
@@ -121,7 +121,7 @@ void FToolSDFGenerator::CreateTextureOnRenderThread(TUniquePtr<FComputeData> Dat
     // 2. 创建空的3D纹理（无初始BulkData）
     FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create3D(TEXT("ToolSDFVolumeTexture"),
         FIntVector(TextureSize,TextureSize,TextureSize),
-        PF_R16_SINT)
+        PF_R32_FLOAT)
         .SetNumMips(1)
         .SetFlags(ETextureCreateFlags::ShaderResource | ETextureCreateFlags::CPUWritable) // 允许CPU更新
         .SetInitialState(ERHIAccess::CopyDest);                      // 初始状态为拷贝目标

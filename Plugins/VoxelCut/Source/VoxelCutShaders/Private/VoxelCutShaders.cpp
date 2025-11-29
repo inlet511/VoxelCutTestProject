@@ -18,4 +18,4 @@ void FVoxelCutShadersModule::ShutdownModule()
 
 #undef LOCTEXT_NAMESPACE
 	
-IMPLEMENT_MODULE(FVoxelCutShadersModule, VoxelCut)
+IMPLEMENT_MODULE(FVoxelCutShadersModule, VoxelCutShaders)

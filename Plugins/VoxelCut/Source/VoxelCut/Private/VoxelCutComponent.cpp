@@ -217,7 +217,7 @@ void UVoxelCutComponent::InitToolSDFAsync(int32 TextureSize)
 				{
 					UE_LOG(LogTemp, Warning, TEXT("工具SDF预计算完成（异步）"));
 					// 复制SDF生成器到CutOp（共享指针自动管理生命周期）
-					CutOp->ToolSDF = ToolSDFGenerator;
+					CutOp->ToolSDFGenerator = ToolSDFGenerator;
 
 					// 切削系统初始化完成
 					OnCutSystemInitialized();
@@ -227,7 +227,7 @@ void UVoxelCutComponent::InitToolSDFAsync(int32 TextureSize)
 					UE_LOG(LogTemp, Error, TEXT("工具SDF预计算失败（异步）"));
 					// 失败时释放无效的生成器
 					ToolSDFGenerator.Reset();
-					CutOp->ToolSDF.Reset();
+					CutOp->ToolSDFGenerator.Reset();
 				}
 			});
 		}
@@ -294,29 +294,17 @@ void UVoxelCutComponent::StartAsyncCut()
     // 在异步线程中执行实际切削计算
     Async(EAsyncExecution::ThreadPool, [this]()
     {
-        try
-        {
-            CutOp->CalculateResult(nullptr);
+
+        CutOp->CalculateResult(nullptr);
             
-            // 切削完成，回到主线程
-            Async(EAsyncExecution::TaskGraphMainThread, [this]()
-            {
-                FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();               
+        // 切削完成，回到主线程
+        Async(EAsyncExecution::TaskGraphMainThread, [this]()
+        {
+            FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();               
                 
-                OnCutComplete(ResultMesh);
-            });
-        }
-        catch (const std::exception& e)
-        {
-            UE_LOG(LogTemp, Error, TEXT("Cut operation failed: %s"), UTF8_TO_TCHAR(e.what()));
-            
-            Async(EAsyncExecution::TaskGraphMainThread, [this]()
-            {
-                // 即使失败也标记为完成
-                FScopeLock Lock(&StateLock);
-                CutState = ECutState::Completed;
-            });
-        }
+            OnCutComplete(ResultMesh);
+        });
+        
     });
 }
 

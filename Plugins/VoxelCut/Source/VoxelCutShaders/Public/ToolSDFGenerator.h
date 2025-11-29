@@ -27,6 +27,7 @@ public:
 	// 获取VolumeTexture尺寸
 	int32 GetVolumeSize() const { return VolumeSize; }
 
+
 private:
 	mutable FCriticalSection TextureCritical; // 保护RHI资源访问
 	FTextureRHIRef SDFTextureRHI;       // GPU纹理资源
@@ -39,7 +40,7 @@ private:
 		FDynamicMesh3 ToolMesh;
 		int32 TextureSize;
 		FAxisAlignedBox3d Bounds;
-		TArray<int16> VolumeData;
+		TArray<float> VolumeData;
 		TFunction<void(bool)> CompleteCallback;
 	};
 

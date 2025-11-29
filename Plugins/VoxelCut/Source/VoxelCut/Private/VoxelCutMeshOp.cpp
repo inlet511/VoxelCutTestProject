@@ -188,7 +188,7 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 	}
 	// 2. 设置发送给GPU的参数
 	FVoxelCutCSParams Params;
-	Params.ToolSDF = ToolSDF;
+	Params.ToolSDFGenerator = ToolSDFGenerator;
 	Params.ToolTransform = ToolTransform;
 	Params.OctreeNodesArray = FlatOctreeNodes;
 

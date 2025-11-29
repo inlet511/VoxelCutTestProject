@@ -26,7 +26,8 @@ public class VoxelCutShaders : ModuleRules
 			new string[]
 			{
 				"Core",
-				"GeometryCore"
+				"GeometryCore",
+				"RenderDocPlugin"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
