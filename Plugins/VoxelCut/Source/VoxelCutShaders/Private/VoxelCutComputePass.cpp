@@ -6,7 +6,6 @@
 #include "UniformBuffer.h"
 #include "RHICommandList.h"
 #include "RHIGPUReadback.h"
-//#include "IRenderDocPlugin.h"
 
 UE_DISABLE_OPTIMIZATION
 
@@ -45,6 +44,8 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 			PassParameters->ToolSDF = Params.ToolSDFGenerator->GetSDFTextureRHI();
 			PassParameters->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Mirror, AM_Mirror>::GetRHI();
 
+			// constexpr uint32 ElementSize = sizeof(FlatOctreeNode);
+			// 注意！这类不能是FlatOctreeNode的大小，因为FVector和和float3长度完全不一样！
 			constexpr uint32 ElementSize = sizeof(FlatOctreeNode);
 			const uint32 ArrayElementCount = Params.OctreeNodesArray.Num();
 
@@ -88,7 +89,7 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 			TRDGUniformBufferRef<FToolUB> ToolUB = GraphBuilder.CreateUniformBuffer(ToolUBParameters);
 			PassParameters->ToolUB = ToolUB;
 
-			FIntVector GroupCount(FMath::DivideAndRoundUp<int>(ArrayElementCount, THREADS_X), 1, 1);
+			FIntVector GroupCount(FMath::DivideAndRoundUp<int>(ArrayElementCount, 64), 1, 1);
 
 			GraphBuilder.AddPass(
 				RDG_EVENT_NAME("ExecuteVoxelCuteComputeShader"),
@@ -101,7 +102,7 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 
 
 			FRHIGPUBufferReadback* GPUBufferReadback = new FRHIGPUBufferReadback(TEXT("ExecuteVoxelCutComputeShaderOutput"));
-			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback, OutputBuffer, 0u);			
+			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback, OutputBuffer, 0u);
 
 			auto RunnerFunc = [GPUBufferReadback, AsyncCallback, ArrayElementCount](auto&& RunnerFunc) -> void {
 

@@ -3,12 +3,11 @@
 #include "ShaderParameterStruct.h"
 #include "ToolSDFGenerator.h"
 
-#define THREADS_X 64
 
 struct FlatOctreeNode
 {
-	FVector BoundsMin;
-	FVector BoundsMax;
+	float BoundsMin[3];
+	float BoundsMax[3];
 	float Voxels[8]; // 固定成8个体素
 };
 
@@ -51,7 +50,7 @@ static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameter
 
 		const FPermutationDomain PermutationVector(Parameters.PermutationId);
 		
-		OutEnvironment.SetDefine(TEXT("THREADS_X"), THREADS_X);
+		OutEnvironment.SetDefine(TEXT("THREADS_X"), 64);
 		OutEnvironment.SetDefine(TEXT("THREADS_Y"), 1);
 		OutEnvironment.SetDefine(TEXT("THREADS_Z"), 1);		
 	}

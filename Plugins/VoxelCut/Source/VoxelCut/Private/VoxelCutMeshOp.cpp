@@ -166,8 +166,16 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 	for (uint32 i = 0; i < NodeCount; i++)
 	{
 		// 赋值边界
-		FlatOctreeNodes[i].BoundsMax = AffectedNodes[i]->Bounds.Max;
-		FlatOctreeNodes[i].BoundsMin = AffectedNodes[i]->Bounds.Min;
+		/*FlatOctreeNodes[i].BoundsMax = AffectedNodes[i]->Bounds.Max;
+		FlatOctreeNodes[i].BoundsMin = AffectedNodes[i]->Bounds.Min;*/
+		FlatOctreeNodes[i].BoundsMin[0] = AffectedNodes[i]->Bounds.Min.X;
+		FlatOctreeNodes[i].BoundsMin[1] = AffectedNodes[i]->Bounds.Min.Y;
+		FlatOctreeNodes[i].BoundsMin[2] = AffectedNodes[i]->Bounds.Min.Z;
+
+		FlatOctreeNodes[i].BoundsMax[0] = AffectedNodes[i]->Bounds.Max.X;
+		FlatOctreeNodes[i].BoundsMax[1] = AffectedNodes[i]->Bounds.Max.Y;
+		FlatOctreeNodes[i].BoundsMax[2] = AffectedNodes[i]->Bounds.Max.Z;
+
 
 		// 安全拷贝Voxels数组（确保源数据有效）
 		if (AffectedNodes[i] != nullptr)
