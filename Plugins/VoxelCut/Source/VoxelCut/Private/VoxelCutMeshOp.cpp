@@ -162,12 +162,9 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 
 	TArray<FlatOctreeNode> FlatOctreeNodes;
 	FlatOctreeNodes.SetNum(NodeCount);
-	// 现在可以安全访问下标
 	for (uint32 i = 0; i < NodeCount; i++)
 	{
 		// 赋值边界
-		/*FlatOctreeNodes[i].BoundsMax = AffectedNodes[i]->Bounds.Max;
-		FlatOctreeNodes[i].BoundsMin = AffectedNodes[i]->Bounds.Min;*/
 		FlatOctreeNodes[i].BoundsMin[0] = AffectedNodes[i]->Bounds.Min.X;
 		FlatOctreeNodes[i].BoundsMin[1] = AffectedNodes[i]->Bounds.Min.Y;
 		FlatOctreeNodes[i].BoundsMin[2] = AffectedNodes[i]->Bounds.Min.Z;
@@ -177,21 +174,14 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 		FlatOctreeNodes[i].BoundsMax[2] = AffectedNodes[i]->Bounds.Max.Z;
 
 
-		// 安全拷贝Voxels数组（确保源数据有效）
 		if (AffectedNodes[i] != nullptr)
 		{
-			// 拷贝8个float（匹配Voxels[8]的大小）
-			FMemory::Memcpy(
-				FlatOctreeNodes[i].Voxels, // 目标：当前元素的Voxels数组
-				AffectedNodes[i]->Voxels, // 源：AffectedNodes的Voxels数组
-				sizeof(float) * 8 // 固定大小：8个float
-			);
+			FlatOctreeNodes[i].Voxel = AffectedNodes[i]->Voxel;
+			
 		}
 		else
 		{
-			// 兜底：源节点为空时清空Voxels
-			FMemory::Memzero(FlatOctreeNodes[i].Voxels, sizeof(float) * 8);
-			UE_LOG(LogTemp, Warning, TEXT("AffectedNodes[%d]为空，跳过Voxels拷贝"), i);
+			FlatOctreeNodes[i].Voxel = 1.0f;
 		}
 	}
 	// 2. 设置发送给GPU的参数
@@ -211,13 +201,13 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 			    UE_LOG(LogTemp, Error, TEXT("Compute shader result count mismatch"));
 			    return;
 		    }
-		                                 
+
 		    // 5. 更新体素数据
 		    for (int32 i = 0; i < AffectedNodesCopy.Num(); i++)
 		    {
 			    FOctreeNode* Node = AffectedNodesCopy[i];
 			    const FlatOctreeNode& ResultNode = ResultNodes[i];
-			    FMemory::Memcpy(Node->Voxels, ResultNode.Voxels, sizeof(float) * 8);
+				Node->Voxel = ResultNode.Voxel;
 		    }
 
 		    // 6. 触发模型更新回调
@@ -240,7 +230,28 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 {
 	if (Progress && Progress->Cancelled()) return;
 
+
+	// 检查体素数据有效性
+	if (!Voxels.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("Invalid voxel data for mesh generation"));
+		return;
+	}
+
+	// 检查八叉树边界
+	FAxisAlignedBox3d Bounds = Voxels.GetOctreeBounds();
+	if (Bounds.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("Empty octree bounds"));
+		return;
+	}
+
+	// 打印Voxel信息
+	//PrintOctreeNodeRecursive(Voxels.OctreeRoot, 0);
+
 	double StartTime = FPlatformTime::Seconds();
+
+
 
 	FMarchingCubes MarchingCubes;
 	// 使用八叉树边界
@@ -254,6 +265,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 	};
 
 	MarchingCubes.IsoValue = 0.0f;
+
 
 	ResultMesh->Copy(&MarchingCubes.Generate());
 
@@ -272,6 +284,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 		MeshTransforms::ApplyTransform(*ResultMesh, InverseTargetTransform, true);
 	}
 }
+
 
 void FVoxelCutMeshOp::SmoothGeneratedMesh(FDynamicMesh3& Mesh, int32 Iterations)
 {
@@ -317,6 +330,47 @@ void FVoxelCutMeshOp::SmoothGeneratedMesh(FDynamicMesh3& Mesh, int32 Iterations)
 
 	// 重新计算法线
 	FMeshNormals::QuickComputeVertexNormals(Mesh);
+}
+
+void FVoxelCutMeshOp::PrintOctreeNodeRecursive(const FOctreeNode& Node, int32 Depth)
+{
+
+	// 创建缩进字符串以便于阅读层级关系
+	FString Indent;
+	for (int32 i = 0; i < Depth; i++)
+	{
+		Indent += "  ";
+	}
+
+	FString NodeType = Node.bIsLeaf ? TEXT("叶子") : TEXT("分支");
+	FString EmptyStatus = Node.bIsEmpty ? TEXT("空") : TEXT("非空");
+
+	//UE_LOG(LogTemp, Warning, TEXT("%sL%d-%s-%s: 边界[%s -> %s], 尺寸(%s)"),
+	//	*Indent, Depth, *NodeType, *EmptyStatus,
+	//	*Node.Bounds.Min.ToString(),
+	//	*Node.Bounds.Max.ToString(),
+	//	*(Node.Bounds.Max - Node.Bounds.Min).ToString());
+
+	UE_LOG(LogTemp, Warning, TEXT("%s---------------"), *NodeType);
+
+	if (Node.bIsLeaf)
+	{
+
+		if (!Node.bIsEmpty)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s  体素值样本: %.2f"), *Indent, Node.Voxel);
+		}
+	}
+	//else
+	//{
+	//	UE_LOG(LogTemp, Warning, TEXT("%s  子节点数: %d"), *Indent, Node.Children.Num());
+	//}
+
+	// 递归处理子节点
+	for (const FOctreeNode& Child : Node.Children)
+	{
+		PrintOctreeNodeRecursive(Child, Depth + 1);
+	}
 }
 
 UE_ENABLE_OPTIMIZATION

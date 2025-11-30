@@ -12,10 +12,9 @@ struct VOXELCUT_API FOctreeNode
 {
 	FAxisAlignedBox3d Bounds;
 	TArray<FOctreeNode> Children;
-	float Voxels[8]; // 叶子节点存储体素数据(长度固定为8)
-	int32 VoxelsPerSide = 0; // 每边体素数量
+	float Voxel;
 	int32 Depth = 0;
-	bool bIsLeaf = true;
+	bool bIsLeaf = true; // 默认是true
 	bool bIsEmpty = true; // 标记节点是否为空（优化用）
 	
 

@@ -6,7 +6,7 @@ struct FlatOctreeNode
 {
 	float3 BoundsMin;
 	float3 BoundsMax;
-	float Voxels[8];
+	float Voxel;
 };
 
 // 输入/输出缓冲区
@@ -27,39 +27,29 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 	// 计算节点的中心点和尺寸
 	float3 NodeExtent = Node.BoundsMax - Node.BoundsMin;
-	float3 VoxelStep = NodeExtent;
-	
-	// 遍历8个体素（2x2x2网格）
-	for (int i = 0; i < 8; i++)
-	{
-		// 计算体素在节点内的本地坐标（0或1，对应2x2x2的8个顶点）
-		int3 VoxelLocalPos = int3(
-			(i & 1) ? 1 : 0,
-			(i & 2) ? 1 : 0,
-			(i & 4) ? 1 : 0
-		);
+    float3 NodeCenter = (Node.BoundsMin + Node.BoundsMax) * 0.5f;
 
-		// 计算体素在世界空间中的位置
-		float3 VoxelWorldPos = Node.BoundsMin + VoxelLocalPos * VoxelStep;
 
-		// 1. 将体素世界坐标转换到工具的局部空间
-        float4 VoxelToolLocal = mul(float4(VoxelWorldPos, 1.0), ToolUB.ToolInverseTransform);
-		
+	// 计算体素在世界空间中的位置
+    float3 VoxelWorldPos = NodeCenter;
 
-		bool bInBounds =
-			VoxelToolLocal.x >= ToolUB.ToolBoundsLocalMin.x && VoxelToolLocal.x <= ToolUB.ToolBoundsLocalMax.x &&
-			VoxelToolLocal.y >= ToolUB.ToolBoundsLocalMin.y && VoxelToolLocal.y <= ToolUB.ToolBoundsLocalMax.y &&
-			VoxelToolLocal.z >= ToolUB.ToolBoundsLocalMin.z && VoxelToolLocal.z <= ToolUB.ToolBoundsLocalMax.z;
-		if (!bInBounds)
-			continue;
+	// 1. 将体素世界坐标转换到工具的局部空间
+    float4 VoxelToolLocal = mul(float4(VoxelWorldPos, 1.0), ToolUB.ToolInverseTransform);
 
-		// 2. 计算SDF纹理的UVW坐标（将工具局部空间位置映射到[0,1]范围）
-        float3 SDFSize = float3(ToolUB.VolumeTextureSize, ToolUB.VolumeTextureSize, ToolUB.VolumeTextureSize);
-        float3 SDFUVW = (VoxelToolLocal.xyz - ToolUB.ToolBoundsLocalMin) / SDFSize;
+	bool bInBounds =
+		VoxelToolLocal.x >= ToolUB.ToolBoundsLocalMin.x && VoxelToolLocal.x <= ToolUB.ToolBoundsLocalMax.x &&
+		VoxelToolLocal.y >= ToolUB.ToolBoundsLocalMin.y && VoxelToolLocal.y <= ToolUB.ToolBoundsLocalMax.y &&
+		VoxelToolLocal.z >= ToolUB.ToolBoundsLocalMin.z && VoxelToolLocal.z <= ToolUB.ToolBoundsLocalMax.z;
+	if (!bInBounds)
+        return;
+
+	// 2. 计算SDF纹理的UVW坐标（将工具局部空间位置映射到[0,1]范围）
+    float3 SDFSize = float3(ToolUB.VolumeTextureSize, ToolUB.VolumeTextureSize, ToolUB.VolumeTextureSize);
+    float3 SDFUVW = (VoxelToolLocal.xyz - ToolUB.ToolBoundsLocalMin) / SDFSize;
 
 		// 修正纹理坐标：将[0,1]范围映射到纹理像素中心（避免采样偏差）
-        float3 HalfVoxelSize = 1.0f / (2.0f * ToolUB.VolumeTextureSize);
-        SDFUVW = SDFUVW * (1.0f - 2.0f * HalfVoxelSize) + HalfVoxelSize;
+        //float3 HalfVoxelSize = 1.0f / (2.0f * ToolUB.VolumeTextureSize);
+        //SDFUVW = SDFUVW * (1.0f - 2.0f * HalfVoxelSize) + HalfVoxelSize;
 		
 		// 采样原始带符号距离（无需解码）
         float SignedDist = ToolSDF.SampleLevel(ToolSDFSampler, SDFUVW,0).x;
@@ -69,9 +59,9 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		if (SignedDist < 0.0)
 		{
 			// 体素在工具内部，将其值设为正（表示被切割）
-			Node.Voxels[i] = abs(Node.Voxels[i]); // 保留距离大小，转为正值
+			Node.Voxel = abs(Node.Voxel); // 保留距离大小，转为正值
 		}
-	}
+	
 
 	// 写入输出缓冲区
 	OutputBuffer[NodeIndex] = Node;

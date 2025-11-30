@@ -75,6 +75,7 @@ namespace UE
     
 			// 网格生成
 			void ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress);
+
     
 		private:
 			// 内部状态
@@ -85,6 +86,9 @@ namespace UE
 
 			// 受到影响的八叉树节点列表
 			TArray<FOctreeNode*> AffectedNodes;
+
+			void PrintOctreeNodeRecursive(const FOctreeNode& Node, int32 Depth);
+
 
 		};
 	}

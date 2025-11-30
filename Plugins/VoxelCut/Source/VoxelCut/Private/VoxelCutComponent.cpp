@@ -161,6 +161,8 @@ void UVoxelCutComponent::InitializeCutSystem()
 		CutOp->InitializeVoxelData(nullptr);
 	}
 
+	VisualizeOctreeNode();
+
 	// 初始化切割工具VolumeTexture资源
 	InitToolSDFAsync(64);
 
@@ -366,8 +368,7 @@ void UVoxelCutComponent::VisualizeOctreeNodeRecursive(const FOctreeNode& Node, i
 	FVector Center = Node.Bounds.Center();
 	FVector Extent = Node.Bounds.Extents();
 	
-	// 使用DrawDebugBox绘制边界框
-	DrawDebugBox(GetWorld(), Center, Extent, NodeColor, true, -1.0f, 0, 2.0f);
+
 	
 	// 存储调试信息以便后续管理
 	FDebugBoxInfo BoxInfo;
@@ -379,20 +380,18 @@ void UVoxelCutComponent::VisualizeOctreeNodeRecursive(const FOctreeNode& Node, i
 	// 如果是叶子节点，绘制额外的信息
 	if (Node.bIsLeaf)
 	{
-		// 绘制小球标记叶子节点
-		DrawDebugSphere(GetWorld(), Center, 5.0f, 8, FColor::White, true, -1.0f, 0, 1.0f);
-		
-		// 显示体素数量信息
-
-			FString VoxelInfo = FString::Printf(TEXT("Leaf L%d\n"), Depth);
-			DrawDebugString(GetWorld(), Center + FVector(0,0,20), VoxelInfo, nullptr, FColor::White, -1.0f, true);
-		
+		FVector TextLocation = Center + FVector(0, 0, Extent.Z + 10.0f);
+		FString VoxelInfo = FString::Printf(TEXT("%.2f"), Node.Voxel);
+		DrawDebugString(GetWorld(), Center, VoxelInfo, nullptr, FColor::Green, -1.0f, true);
+		//DrawDebugBox(GetWorld(), Center, Extent, NodeColor, true, -1.0f, 0, 0.5f);
 	}
 	else
 	{
+		FString VoxelInfo = FString::Printf(TEXT("NotLeaf"), Node.Voxel);
+		DrawDebugString(GetWorld(), Center, VoxelInfo, nullptr, FColor::Red, -1.0f, true);
 		// 非叶子节点显示深度信息
-		FString DepthInfo = FString::Printf(TEXT("Node L%d\nChildren:%d"), Depth, Node.Children.Num());
-		DrawDebugString(GetWorld(), Center + FVector(0,0,20), DepthInfo, nullptr, NodeColor, -1.0f, true);
+		/*FString DepthInfo = FString::Printf(TEXT("Node L%d"), Depth);
+		DrawDebugString(GetWorld(), Center, DepthInfo, nullptr, NodeColor, -1.0f, true);*/
 	}
 	
 	// 递归处理子节点
@@ -467,12 +466,11 @@ void UVoxelCutComponent::PrintOctreeNodeRecursive(const FOctreeNode& Node, int32
             UE_LOG(LogTemp, Warning, TEXT("%s "),     *Indent);
             
             // 打印前几个体素的值作为样本
-            int32 SampleCount = 5;
+
             FString SampleValues;
-            for (int32 i = 0; i < SampleCount; i++)
-            {
-                SampleValues += FString::Printf(TEXT("%.2f "), Node.Voxels[i]);
-            }
+
+            SampleValues += FString::Printf(TEXT("%.2f "), Node.Voxel);
+            
             UE_LOG(LogTemp, Warning, TEXT("%s  体素值样本: %s"), *Indent, *SampleValues);
         }
     }

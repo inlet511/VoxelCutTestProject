@@ -8,7 +8,7 @@ struct FlatOctreeNode
 {
 	float BoundsMin[3];
 	float BoundsMax[3];
-	float Voxels[8]; // 固定成8个体素
+	float Voxel;
 };
 
 
@@ -52,7 +52,7 @@ static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameter
 		
 		OutEnvironment.SetDefine(TEXT("THREADS_X"), 64);
 		OutEnvironment.SetDefine(TEXT("THREADS_Y"), 1);
-		OutEnvironment.SetDefine(TEXT("THREADS_Z"), 1);		
+		OutEnvironment.SetDefine(TEXT("THREADS_Z"), 1);
 	}
 };
 

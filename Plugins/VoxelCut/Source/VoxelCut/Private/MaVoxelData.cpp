@@ -9,6 +9,8 @@ using namespace UE::Geometry;
 void FOctreeNode::Subdivide(double MinVoxelSize)
 {
 	if (!bIsLeaf) return;
+
+    Voxel = 10000.0f; // 非叶子节点体素无关紧要，但初始化为一个大值
     
 	FVector3d Center = Bounds.Center();
     FVector3d Size = Bounds.Max - Bounds.Min;
@@ -118,8 +120,8 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
     FAxisAlignedBox3d WorldBounds(LocalBounds, Transform);
     
     // 设置八叉树根节点边界（稍微扩展）
-    FVector3d ExpandedMin = WorldBounds.Min - FVector3d(2.0 * MarchingCubeSize);
-    FVector3d ExpandedMax = WorldBounds.Max + FVector3d(2.0 * MarchingCubeSize);
+    FVector3d ExpandedMin = WorldBounds.Min - FVector3d(4.0 * MarchingCubeSize);
+    FVector3d ExpandedMax = WorldBounds.Max + FVector3d(4.0 * MarchingCubeSize);
     OctreeRoot.Bounds = FAxisAlignedBox3d(ExpandedMin, ExpandedMax);
     OctreeRoot.Depth = 0;
     OctreeRoot.bIsLeaf = true;
@@ -142,46 +144,23 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
         {
             Node.bIsLeaf = true;
             
-            // 为叶子节点分配体素存储（2x2x2 最小分辨率）
-            int32 VoxelsPerSide = 2;
-            // if (MinNodeSize > MinVoxelSize * 2) 
-            // {
-            //     VoxelsPerSide = 4; // 中等大小节点
-            // }
-            // if (MinNodeSize > MinVoxelSize * 4) 
-            // {
-            //     VoxelsPerSide = 8; // 较大节点
-            // }
-            Node.VoxelsPerSide = VoxelsPerSide;
-            
             // 计算叶子节点内每个体素的值
-            FVector3d VoxelSizeLeaf = Node.Bounds.Extents() / (VoxelsPerSide - 1);
+            FVector3d VoxelSize = Node.Bounds.Max - Node.Bounds.Min;
             Node.bIsEmpty = true;
             
         	std::atomic<bool> bNodeNonEmpty(false);  // 原子变量，用于线程安全地更新节点状态
 
-        	// 并行处理Z轴
-        	ParallelFor(VoxelsPerSide, [&](int32 Z)
+
+			FVector3d WorldPos = Node.Bounds.Center();            
+			float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos);
+			Node.Voxel = Distance;
+            
+			// 检查节点是否变为非空
+			if (Distance < NodeSize.GetMax())
 			{
-				for (int32 Y = 0; Y < VoxelsPerSide; Y++)
-				{
-					for (int32 X = 0; X < VoxelsPerSide; X++)
-					{
-						FVector3d LocalPos = FVector3d(X, Y, Z) * VoxelSizeLeaf;
-						FVector3d WorldPos = Node.Bounds.Min + LocalPos;
-            
-						float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos);
-						int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
-						Node.Voxels[Index] = Distance;
-            
-						// 检查节点是否变为非空
-						if (Distance < NodeSize.GetMax())
-						{
-							bNodeNonEmpty = true;  // 原子操作，线程安全
-						}
-					}
-				}
-			});
+				bNodeNonEmpty = true;  // 原子操作，线程安全
+			}
+
 
         	Node.bIsEmpty = !bNodeNonEmpty;
         }
@@ -227,50 +206,7 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
         {
             if (Node.bIsEmpty) return 1.0f;
             
-            // 在叶子节点内插值
-            FVector3d LocalPos = Point - Node.Bounds.Min;
-            FVector3d Size = Node.Bounds.Max - Node.Bounds.Min;
-            
-            int32 VoxelsPerSide = Node.VoxelsPerSide;
-            if (VoxelsPerSide <= 1) return 1.0f;
-            
-            FVector3d VoxelSizeLeaf = Size / (VoxelsPerSide - 1);
-            
-            FVector3d Coord = LocalPos / VoxelSizeLeaf;
-            int32 X = FMath::Clamp(FMath::FloorToInt(Coord.X), 0, VoxelsPerSide - 2);
-            int32 Y = FMath::Clamp(FMath::FloorToInt(Coord.Y), 0, VoxelsPerSide - 2);
-            int32 Z = FMath::Clamp(FMath::FloorToInt(Coord.Z), 0, VoxelsPerSide - 2);
-            
-            // 三线性插值
-            double u = FMath::Clamp(Coord.X - X, 0.0, 1.0);
-            double v = FMath::Clamp(Coord.Y - Y, 0.0, 1.0);
-            double w = FMath::Clamp(Coord.Z - Z, 0.0, 1.0);
-            
-            auto GetVoxel = [&](int32 dx, int32 dy, int32 dz) -> float
-            {
-                int32 Index = (Z + dz) * VoxelsPerSide * VoxelsPerSide + 
-                             (Y + dy) * VoxelsPerSide + (X + dx);
-                return (Index >= 0 && Index < 8) ? Node.Voxels[Index] : 1.0f;
-            };
-            
-            float v000 = GetVoxel(0, 0, 0);
-            float v100 = GetVoxel(1, 0, 0);
-            float v010 = GetVoxel(0, 1, 0);
-            float v110 = GetVoxel(1, 1, 0);
-            float v001 = GetVoxel(0, 0, 1);
-            float v101 = GetVoxel(1, 0, 1);
-            float v011 = GetVoxel(0, 1, 1);
-            float v111 = GetVoxel(1, 1, 1);
-            
-            float x00 = FMath::Lerp(v000, v100, u);
-            float x10 = FMath::Lerp(v010, v110, u);
-            float x01 = FMath::Lerp(v001, v101, u);
-            float x11 = FMath::Lerp(v011, v111, u);
-            
-            float y0 = FMath::Lerp(x00, x10, v);
-            float y1 = FMath::Lerp(x01, x11, v);
-            
-            return FMath::Lerp(y0, y1, w);
+            return Node.Voxel;
         }
         else
         {
@@ -297,34 +233,16 @@ void FMaVoxelData::UpdateLeafNode(
     if (LeafNode.bIsLeaf)
     {
         if (LeafNode.bIsEmpty) return;
-        
-        // 更新叶子节点内的体素
-        int32 VoxelsPerSide = LeafNode.VoxelsPerSide;
-        if (VoxelsPerSide <= 1) return;
-        
-        FVector3d VoxelSizeLeaf = (LeafNode.Bounds.Max - LeafNode.Bounds.Min) / (VoxelsPerSide - 1);
-        
-        for (int32 Z = 0; Z < VoxelsPerSide; Z++)
+
+        // 更新叶子节点内的单个体素
+        // 计算节点中心点作为体素位置
+        FVector3d NodeCenter = (LeafNode.Bounds.Min + LeafNode.Bounds.Max) * 0.5;
+
+        // 检查中心点是否在更新范围内
+        if (UpdateBounds.Contains(NodeCenter))
         {
-            for (int32 Y = 0; Y < VoxelsPerSide; Y++)
-            {
-                for (int32 X = 0; X < VoxelsPerSide; X++)
-                {
-                    FVector3d LocalPos = FVector3d(X, Y, Z) * VoxelSizeLeaf;
-                    FVector3d WorldPos = LeafNode.Bounds.Min + LocalPos;
-                    
-                    if (UpdateBounds.Contains(WorldPos))
-                    {
-                        float NewValue = UpdateFunction(WorldPos);
-                        int32 Index = Z * VoxelsPerSide * VoxelsPerSide + Y * VoxelsPerSide + X;
-                        
-                        if (Index >= 0 && Index < 8)
-                        {
-                            LeafNode.Voxels[Index] = NewValue;
-                        }
-                    }
-                }
-            }
+            float NewValue = UpdateFunction(NodeCenter);
+            LeafNode.Voxel = NewValue;
         }
     }
       
@@ -349,7 +267,7 @@ void FMaVoxelData::DebugLogOctreeStats() const
 {
     int32 LeafCount = 0;
     int32 NonEmptyLeafCount = 0;
-    int32 TotalVoxels = 0;
+
     
     TFunction<void(const FOctreeNode&)> CountNodes = [&](const FOctreeNode& Node)
     {
@@ -359,7 +277,6 @@ void FMaVoxelData::DebugLogOctreeStats() const
             if (!Node.bIsEmpty) 
             {
                 NonEmptyLeafCount++;
-                TotalVoxels += 8;
             }
         }
         else
@@ -373,8 +290,8 @@ void FMaVoxelData::DebugLogOctreeStats() const
     
     CountNodes(OctreeRoot);
     
-    UE_LOG(LogTemp, Warning, TEXT("八叉树统计: 总叶子节点=%d, 非空叶子=%d, 存储体素数=%d"), 
-           LeafCount, NonEmptyLeafCount, TotalVoxels);
+    UE_LOG(LogTemp, Warning, TEXT("八叉树统计: 总叶子节点=%d, 非空叶子=%d"), 
+           LeafCount, NonEmptyLeafCount);
 }
 
 float FMaVoxelData::CalculateDistanceToMesh(const FDynamicMeshAABBTree3& Spatial,
