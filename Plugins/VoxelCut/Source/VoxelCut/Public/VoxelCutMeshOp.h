@@ -52,7 +52,6 @@ namespace UE
 
 			void SetTransform(const FTransformSRT3d& Transform);
 
-			virtual void CalculateResult(FProgressCancel* Progress) override;
     
 			// 初始化体素数据（首次使用）
 			bool InitializeVoxelData(FProgressCancel* Progress);
@@ -68,13 +67,12 @@ namespace UE
 							 FMaVoxelData& VoxelData, FProgressCancel* Progress);
     
 			// 局部更新：只更新受刀具影响的区域
-			void UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh, 
-								  const FTransform& ToolTransform, FProgressCancel* Progress);
+			void UpdateLocalRegion();
     
 			// 网格生成
 			void ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress);
 
-    
+			virtual void CalculateResult(FProgressCancel* Progress) override;
 		private:
 			// 内部状态
 			bool bVoxelDataInitialized = false;

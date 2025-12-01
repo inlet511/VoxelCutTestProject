@@ -23,7 +23,7 @@ void AVoxelCuttingActor::StartCutting()
 {
 	if (VoxelCutComponent)
 	{
-		VoxelCutComponent->StartCutting();
+		VoxelCutComponent->EnableCutting();
 	}
 }
 
@@ -31,7 +31,7 @@ void AVoxelCuttingActor::StopCutting()
 {
 	if (VoxelCutComponent)
 	{
-		VoxelCutComponent->StopCutting();
+		VoxelCutComponent->DisableCutting();
 	}
 }
 

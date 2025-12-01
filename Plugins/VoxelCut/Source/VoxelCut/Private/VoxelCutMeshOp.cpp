@@ -21,23 +21,6 @@ void FVoxelCutMeshOp::SetTransform(const FTransformSRT3d& Transform)
 	ResultTransform = Transform;
 }
 
-void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
-{
-	if (Progress && Progress->Cancelled())
-	{
-		return;
-	}
-
-	if (!bVoxelDataInitialized)
-	{
-		UE_LOG(LogTemp, Error, TEXT("Initialize Voxel Data First! (Call InitializeVoxelData())"));
-		return;
-	}
-
-
-	UpdateLocalRegion(*PersistentVoxelData, *CutToolMesh, CutToolTransform, Progress);
-}
-
 bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
 {
 	if (!TargetMesh)
@@ -100,33 +83,34 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
 }
 
 
-void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh,
-                                        const FTransform& ToolTransform, FProgressCancel* Progress)
+void FVoxelCutMeshOp::UpdateLocalRegion()
 {
-	if (!TargetVoxels.IsValid()|| !CutToolMesh)
+	if (!PersistentVoxelData.IsValid()|| !CutToolMesh)
 	{
 		UE_LOG(LogTemp, Error, TEXT("UpdateLocalRegion: [PersistentVoxelData OR CutToolMesh] is not valid"));
 		return;
 	}
 
-	double StartTime = FPlatformTime::Seconds();
-
 	// 切削工具的扩展边界
-	FAxisAlignedBox3d OriginalBounds = ToolMesh.GetBounds();
-	FAxisAlignedBox3d TransformedBounds(OriginalBounds, ToolTransform);
-	FVector3d ExpandedMin = TransformedBounds.Min - FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
-	FVector3d ExpandedMax = TransformedBounds.Max + FVector3d(UpdateMargin * TargetVoxels.MarchingCubeSize);
+	FAxisAlignedBox3d OriginalBounds = CutToolMesh->GetBounds();
+	FAxisAlignedBox3d TransformedBounds(OriginalBounds, CutToolTransform);
+	FVector3d ExpandedMin = TransformedBounds.Min - FVector3d(UpdateMargin * PersistentVoxelData->MarchingCubeSize);
+	FVector3d ExpandedMax = TransformedBounds.Max + FVector3d(UpdateMargin * PersistentVoxelData->MarchingCubeSize);
 	FAxisAlignedBox3d ToolExtendedBounds(ExpandedMin, ExpandedMax);
 
-	double EndTime1 = FPlatformTime::Seconds();
+	double StartTime = FPlatformTime::Seconds();
 
 	// 1. 收集受到影响的叶子节点
 	AffectedNodes.Empty();
-	TargetVoxels.OctreeRoot.CollectAffectedNodes(TransformedBounds, AffectedNodes);
+	PersistentVoxelData->OctreeRoot.CollectAffectedNodes(TransformedBounds, AffectedNodes);
 	uint32 NodeCount = AffectedNodes.Num();
 	if (NodeCount == 0)
 		return;
 
+	double EndTime = FPlatformTime::Seconds();
+
+	UE_LOG(LogTemp, Warning, TEXT("收集受影响叶子节点耗时: %.2f 毫秒"), (EndTime-StartTime) * 1000.0f);
+	
 	TArray<FlatOctreeNode> FlatOctreeNodes;
 	FlatOctreeNodes.SetNum(NodeCount);
 	for (uint32 i = 0; i < NodeCount; i++)
@@ -140,11 +124,9 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 		FlatOctreeNodes[i].BoundsMax[1] = AffectedNodes[i]->Bounds.Max.Y;
 		FlatOctreeNodes[i].BoundsMax[2] = AffectedNodes[i]->Bounds.Max.Z;
 
-
 		if (AffectedNodes[i] != nullptr)
 		{
-			FlatOctreeNodes[i].Voxel = AffectedNodes[i]->Voxel;
-			
+			FlatOctreeNodes[i].Voxel = AffectedNodes[i]->Voxel;			
 		}
 		else
 		{
@@ -154,7 +136,7 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 	// 2. 设置发送给GPU的参数
 	FVoxelCutCSParams Params;
 	Params.ToolSDFGenerator = ToolSDFGenerator;
-	Params.ToolTransform = ToolTransform;
+	Params.ToolTransform = CutToolTransform;
 	Params.OctreeNodesArray = FlatOctreeNodes;
 
 	// 3. 调用ComputeShader并设置回调
@@ -183,13 +165,6 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 			    OnVoxelDataUpdated.Execute();
 		    }
 	    });
-
-
-	double EndTime = FPlatformTime::Seconds();
-	//UE_LOG(LogTemp, Warning, TEXT("局部区域更新整体耗时: %.2f 毫秒, 工具信息准备耗时：%.5f, 占比：%.5f, 更新了 %d 个体素"), (EndTime - StartTime) * 1000.0,(EndTime1-StartTime), (EndTime1 - StartTime)/(EndTime-StartTime), UpdatedVoxels);
-
-	// 切削后对局部区域进行高斯平滑（减少体素值突变）
-	//SmoothLocalVoxels(TargetVoxels, VoxelMin, VoxelMax, 1);
 }
 
 
@@ -229,8 +204,6 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 {
 	if (Progress && Progress->Cancelled()) return;
 
-	//LogVoxelData(Voxels);
-
 	// 检查体素数据有效性
 	if (!Voxels.IsValid())
 	{
@@ -246,12 +219,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 		return;
 	}
 
-	// 打印Voxel信息
-	//PrintOctreeNodeRecursive(Voxels.OctreeRoot, 0);
-
 	double StartTime = FPlatformTime::Seconds();
-
-
 
 	FMarchingCubes MarchingCubes;
 	// 使用八叉树边界
@@ -265,15 +233,10 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 	};
 
 	MarchingCubes.IsoValue = 0.0f;
-	bool MeshOK = MarchingCubes.Validate();
-	if (!MeshOK)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Mesh No OK"));
-		return;
-	}
 	MarchingCubes.Generate();
 
 	ResultMesh->Copy(&MarchingCubes);
+	
 	// 平滑模型
 	//SmoothGeneratedMesh(*ResultMesh, SmoothingIteration);
 
@@ -288,6 +251,10 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 		FTransform InverseTargetTransform = TargetTransform.Inverse();
 		MeshTransforms::ApplyTransform(*ResultMesh, InverseTargetTransform, true);
 	}
+}
+
+void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
+{
 }
 
 
@@ -339,7 +306,6 @@ void FVoxelCutMeshOp::SmoothGeneratedMesh(FDynamicMesh3& Mesh, int32 Iterations)
 
 void FVoxelCutMeshOp::PrintOctreeNodeRecursive(const FOctreeNode& Node, int32 Depth)
 {
-
 	// 创建缩进字符串以便于阅读层级关系
 	FString Indent;
 	for (int32 i = 0; i < Depth; i++)
@@ -349,12 +315,6 @@ void FVoxelCutMeshOp::PrintOctreeNodeRecursive(const FOctreeNode& Node, int32 De
 
 	FString NodeType = Node.bIsLeaf ? TEXT("叶子") : TEXT("分支");
 	FString EmptyStatus = Node.bIsEmpty ? TEXT("空") : TEXT("非空");
-
-	//UE_LOG(LogTemp, Warning, TEXT("%sL%d-%s-%s: 边界[%s -> %s], 尺寸(%s)"),
-	//	*Indent, Depth, *NodeType, *EmptyStatus,
-	//	*Node.Bounds.Min.ToString(),
-	//	*Node.Bounds.Max.ToString(),
-	//	*(Node.Bounds.Max - Node.Bounds.Min).ToString());
 
 	UE_LOG(LogTemp, Warning, TEXT("%s---------------"), *NodeType);
 
@@ -366,11 +326,6 @@ void FVoxelCutMeshOp::PrintOctreeNodeRecursive(const FOctreeNode& Node, int32 De
 			UE_LOG(LogTemp, Warning, TEXT("%s  体素值样本: %.2f"), *Indent, Node.Voxel);
 		}
 	}
-	//else
-	//{
-	//	UE_LOG(LogTemp, Warning, TEXT("%s  子节点数: %d"), *Indent, Node.Children.Num());
-	//}
-
 	// 递归处理子节点
 	for (const FOctreeNode& Child : Node.Children)
 	{

@@ -44,28 +44,24 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
         return;
 
 	// 2. 计算SDF纹理的UVW坐标（将工具局部空间位置映射到[0,1]范围）
-    float3 SDFSize = float3(ToolUB.VolumeTextureSize, ToolUB.VolumeTextureSize, ToolUB.VolumeTextureSize);
+    float3 SDFSize = ToolUB.ToolBoundsLocalMax - ToolUB.ToolBoundsLocalMin;
     float3 SDFUVW = (VoxelToolLocal.xyz - ToolUB.ToolBoundsLocalMin) / SDFSize;
 
-		// 修正纹理坐标：将[0,1]范围映射到纹理像素中心（避免采样偏差）
-        //float3 HalfVoxelSize = 1.0f / (2.0f * ToolUB.VolumeTextureSize);
-        //SDFUVW = SDFUVW * (1.0f - 2.0f * HalfVoxelSize) + HalfVoxelSize;
-		
-		// 采样原始带符号距离（无需解码）
-        float SignedDist = ToolSDF.SampleLevel(ToolSDFSampler, SDFUVW,0).x;
-		// 注意这里不能使用Sample()函数，Package会报错
-
-		// 4. 判断体素是否在工具内部（SDF < 0表示内部）
-		if (SignedDist < 0.0)
-		{
-			// 体素在工具内部，将其值设为正（表示被切割）
-			Node.Voxel = abs(Node.Voxel); // 保留距离大小，转为正值
-		}
+	// 修正纹理坐标：将[0,1]范围映射到纹理像素中心（避免采样偏差）
+    float3 HalfVoxelSize = 1.0f / (2.0f * ToolUB.VolumeTextureSize);
+    SDFUVW = SDFUVW * (1.0f - 2.0f * HalfVoxelSize) + HalfVoxelSize;
 	
+	// 采样原始带符号距离（无需解码）
+    float SignedDist = ToolSDF.SampleLevel(ToolSDFSampler, SDFUVW,0).x;
+	// 注意这里不能使用Sample()函数，Package会报错
+
+	// 4. 判断体素是否在工具内部（SDF < 0表示内部）
+	if (SignedDist < 0.0)
+	{
+		// 体素在工具内部，将其值设为正（表示被切割）
+		Node.Voxel = abs(Node.Voxel); // 保留距离大小，转为正值
+	}	
 
 	// 写入输出缓冲区
 	OutputBuffer[NodeIndex] = Node;
-    //OutputBuffer[NodeIndex].Voxels[0] = (float) NodeIndex;
-
-
 }

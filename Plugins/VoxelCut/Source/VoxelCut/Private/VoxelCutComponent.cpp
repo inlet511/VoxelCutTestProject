@@ -12,7 +12,7 @@ UVoxelCutComponent::UVoxelCutComponent()
 	PrimaryComponentTick.TickGroup = TG_PostPhysics;
     
 	CutState = ECutState::Idle;
-	bIsCutting = false;
+	bCuttingEnabled = false;
 	DistanceSinceLastUpdate = 0.0f;	
 }
 
@@ -21,97 +21,6 @@ void UVoxelCutComponent::BeginPlay()
 	Super::BeginPlay();
 }
 
-
-void UVoxelCutComponent::TickComponent(float DeltaTime, ELevelTick TickType,
-									   FActorComponentTickFunction* ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	if (!bSystemInitialized || !bIsCutting || !CutToolMeshComponent || !TargetMeshComponent)
-		return;
-
-	// 获取当前工具位置
-	FTransform CurrentTransform = CutToolMeshComponent->GetComponentTransform();
-	
-	
-	// 检查是否需要切削更新
-	if (NeedsCutUpdate(CurrentTransform))
-	{
-		RequestCut(CurrentTransform);
-        
-		// 重置距离计数
-		DistanceSinceLastUpdate = 0.0f;
-		LastToolPosition = CurrentTransform.GetLocation();
-		LastToolRotation = CurrentTransform.GetRotation().Rotator();
-	}
-	else
-	{
-		DistanceSinceLastUpdate += FVector::Distance(LastToolPosition, CurrentTransform.GetLocation());
-	}
-    
-	// 更新状态机
-	UpdateStateMachine();
-}
-
-void UVoxelCutComponent::OnVoxelDataUpdated()
-{
-	if (!CutOp.IsValid() || !CutOp->PersistentVoxelData.IsValid())
-		return;
-
-	// 在游戏线程生成新的网格
-	Async(EAsyncExecution::TaskGraphMainThread, [this]()
-	{
-		FProgressCancel Cancel;
-		CutOp->ConvertVoxelsToMesh(*CutOp->PersistentVoxelData, &Cancel);
-		FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();
-		OnCutComplete(ResultMesh);
-	});
-}
-
-
-void UVoxelCutComponent::StartCutting()
-{
-	bIsCutting = true;
-    
-	// 记录初始工具位置
-	if (CutToolMeshComponent)
-	{
-		LastToolPosition = CutToolMeshComponent->GetComponentLocation();
-		LastToolRotation = CutToolMeshComponent->GetComponentRotation();
-	}
-    
-	DistanceSinceLastUpdate = 0.0f;
-}
-
-void UVoxelCutComponent::StopCutting()
-{
-	bIsCutting = false;
-}
-
-
-
-void UVoxelCutComponent::OnCutComplete(FDynamicMesh3* ResultMesh)
-{
-	if (ResultMesh /*&& ResultMesh->TriangleCount() > 0*/)
-	{
-		// 更新结果网格
-		if (TargetMeshComponent)
-		{
-			UDynamicMesh* DynamicMesh = TargetMeshComponent->GetDynamicMesh();
-			if (DynamicMesh)
-			{
-				DynamicMesh->SetMesh(*ResultMesh);
-				TargetMeshComponent->NotifyMeshUpdated(); 
-			}
-		}
-	}
-    
-	// 更新状态
-	FScopeLock Lock(&StateLock);
-	CutState = ECutState::Completed;
-
-	VisualizeOctreeNode();
-}
 
 void UVoxelCutComponent::InitializeCutSystem()
 {
@@ -163,7 +72,7 @@ void UVoxelCutComponent::InitializeCutSystem()
 		CutOp->InitializeVoxelData(nullptr);
 	}
 
-	VisualizeOctreeNode();
+	//VisualizeOctreeNode();
 
 	// 初始化切割工具VolumeTexture资源
 	InitToolSDFAsync(64);
@@ -238,6 +147,101 @@ void UVoxelCutComponent::InitToolSDFAsync(int32 TextureSize)
 	);
 }
 
+
+void UVoxelCutComponent::EnableCutting()
+{
+	bCuttingEnabled = true;
+    
+	// 记录初始工具位置
+	if (CutToolMeshComponent)
+	{
+		LastToolPosition = CutToolMeshComponent->GetComponentLocation();
+		LastToolRotation = CutToolMeshComponent->GetComponentRotation();
+	}
+    
+	DistanceSinceLastUpdate = 0.0f;
+}
+
+void UVoxelCutComponent::DisableCutting()
+{
+	bCuttingEnabled = false;
+}
+
+
+void UVoxelCutComponent::TickComponent(float DeltaTime, ELevelTick TickType,
+									   FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (!bSystemInitialized || !bCuttingEnabled || !CutToolMeshComponent || !TargetMeshComponent)
+		return;
+
+	// 获取当前工具位置
+	FTransform CurrentTransform = CutToolMeshComponent->GetComponentTransform();
+	
+	
+	// 检查是否需要切削更新
+	if (NeedsCutUpdate(CurrentTransform))
+	{
+		RequestCut(CurrentTransform);
+        
+		// 重置距离计数
+		DistanceSinceLastUpdate = 0.0f;
+		LastToolPosition = CurrentTransform.GetLocation();
+		LastToolRotation = CurrentTransform.GetRotation().Rotator();
+	}
+	else
+	{
+		DistanceSinceLastUpdate += FVector::Distance(LastToolPosition, CurrentTransform.GetLocation());
+	}
+    
+	// 更新状态机
+	UpdateStateMachine();
+}
+
+void UVoxelCutComponent::OnVoxelDataUpdated()
+{
+	if (!CutOp.IsValid() || !CutOp->PersistentVoxelData.IsValid())
+		return;
+
+	VoxelUpdatedTimeStamp = FPlatformTime::Seconds();
+	
+	// 在游戏线程生成新的网格
+	Async(EAsyncExecution::TaskGraphMainThread, [this]()
+	{
+		FProgressCancel Cancel;
+		CutOp->ConvertVoxelsToMesh(*CutOp->PersistentVoxelData, &Cancel);
+		FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();
+		OnCutComplete(ResultMesh);
+	});
+}
+
+void UVoxelCutComponent::OnCutComplete(FDynamicMesh3* ResultMesh)
+{
+	if (ResultMesh)
+	{
+		// 更新结果网格
+		if (TargetMeshComponent)
+		{
+			UDynamicMesh* DynamicMesh = TargetMeshComponent->GetDynamicMesh();
+			if (DynamicMesh)
+			{
+				DynamicMesh->SetMesh(*ResultMesh);
+				TargetMeshComponent->NotifyMeshUpdated(); 
+			}
+		}
+	}
+
+	CutCompleteTimeStamp = FPlatformTime::Seconds();
+
+	UE_LOG(LogTemp, Warning, TEXT("体素化切削耗时: %.2f 毫秒"), (VoxelUpdatedTimeStamp - StartCutTimeStamp) * 1000.0);
+	UE_LOG(LogTemp, Warning, TEXT("体素网格化耗时: %.2f 毫秒"), (CutCompleteTimeStamp - VoxelUpdatedTimeStamp) * 1000.0);
+	
+	// 更新状态
+	FScopeLock Lock(&StateLock);
+	CutState = ECutState::Completed;
+}
+
 bool UVoxelCutComponent::NeedsCutUpdate(const FTransform& InCurrentToolTransform)
 {
 	float Distance = FVector::Distance(LastToolPosition, InCurrentToolTransform.GetLocation());
@@ -272,13 +276,10 @@ void UVoxelCutComponent::RequestCut(const FTransform& ToolTransform)
 	// 保存当前请求数据
 	CurrentToolTransform = ToolTransform;
 	
-	//UE_LOG(LogTemp, Warning, TEXT("Cut State: %s"),*StaticEnum<ECutState>()->GetNameStringByValue((int64)CutState));
-	
 	// 只有在空闲状态或有新请求时才更新
 	if (CutState == ECutState::Idle || CutState == ECutState::Completed)
 	{		
 		CutState = ECutState::RequestPending;
-		//UE_LOG(LogTemp, Warning, TEXT("Request Pending"));
 	}
 }
 
@@ -289,26 +290,15 @@ void UVoxelCutComponent::StartAsyncCut()
 	if (CutState==ECutState::Processing)
 		return;
 	CutState = ECutState::Processing;
-    
-    // 复制当前状态到局部变量（避免竞态条件）
-    FTransform LocalToolTransform = CurrentToolTransform;
 	
-    CutOp->CutToolTransform = LocalToolTransform;
-    
-    // 在异步线程中执行实际切削计算
+    CutOp->CutToolTransform = CurrentToolTransform;
+
+	StartCutTimeStamp = FPlatformTime::Seconds();
+	
+    // 在异步线程中执行更新体素
     Async(EAsyncExecution::ThreadPool, [this]()
     {
-
-        CutOp->CalculateResult(nullptr);
-            
-        //// 切削完成，回到主线程
-        //Async(EAsyncExecution::TaskGraphMainThread, [this]()
-        //{
-        //    FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();               
-        //        
-        //    OnCutComplete(ResultMesh);
-        //});
-        
+        CutOp->UpdateLocalRegion();
     });
 }
 

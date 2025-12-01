@@ -20,12 +20,6 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 	TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback
 )
 {
-	// 开始捕获
-	//if (IRenderDocPlugin* RenderDocModule = &FModuleManager::LoadModuleChecked<IRenderDocModule>("RenderDoc"))
-	//{
-	//	RenderDocModule->StartFrameCapture();
-	//}
-
 	FRDGBuilder GraphBuilder(RHICmdList);
 	{
 		// 获取ComputeShader
@@ -43,9 +37,7 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 			// 2. 传入SDF参数
 			PassParameters->ToolSDF = Params.ToolSDFGenerator->GetSDFTextureRHI();
 			PassParameters->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Mirror, AM_Mirror>::GetRHI();
-
-			// constexpr uint32 ElementSize = sizeof(FlatOctreeNode);
-			// 注意！这类不能是FlatOctreeNode的大小，因为FVector和和float3长度完全不一样！
+			
 			constexpr uint32 ElementSize = sizeof(FlatOctreeNode);
 			const uint32 ArrayElementCount = Params.OctreeNodesArray.Num();
 
@@ -108,8 +100,6 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 
 				if (GPUBufferReadback->IsReady()) {
 
-
-
 					// 锁定缓冲区以读取数据
 					void* LockedData = GPUBufferReadback->Lock(ArrayElementCount * ElementSize);
 					if (LockedData)
@@ -148,17 +138,10 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 				RunnerFunc(RunnerFunc);
 				});
 		}
-
-		//END_RDG_EVENT(GraphBuilder, "VoxelCutComputeShader");
 	}
 
 	GraphBuilder.Execute();
 
-	// 结束捕获
-	//if (IRenderDocModule* RenderDocModule = &FModuleManager::LoadModuleChecked<IRenderDocModule>("RenderDoc"))
-	//{
-	//	RenderDocModule->EndFrameCapture();
-	//}
 }
 
 UE_ENABLE_OPTIMIZATION

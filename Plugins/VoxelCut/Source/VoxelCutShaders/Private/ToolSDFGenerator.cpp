@@ -29,7 +29,7 @@ void FToolSDFGenerator::ComputeSDFData(TUniquePtr<FComputeData> Data)
 {
     // 1. 计算工具网格边界
     Data->Bounds = Data->ToolMesh.GetBounds();
-    FVector3d SDFExtent = Data->Bounds.Max - Data->Bounds.Min;
+    FVector3d SDFSize = Data->Bounds.Max - Data->Bounds.Min;
 
     // 2. 创建空间查询结构
     FDynamicMeshAABBTree3 ToolSpatial(&Data->ToolMesh);
@@ -40,7 +40,7 @@ void FToolSDFGenerator::ComputeSDFData(TUniquePtr<FComputeData> Data)
     int32 TotalVoxels = Data->VolumeData.Num();
 
     // 计算最大可能距离
-    double MaxPossibleDist = SDFExtent.GetMax() * 2.0;
+    double MaxPossibleDist = SDFSize.GetMax() * 2.0;
 
     // 4. 并行计算每个体素的符号距离
     ParallelFor(Data->TextureSize, [&](int32 Z)
@@ -56,7 +56,7 @@ void FToolSDFGenerator::ComputeSDFData(TUniquePtr<FComputeData> Data)
                     (double)Z / (Data->TextureSize - 1)
                 );
                 
-                FVector3d SamplePos = Data->Bounds.Min + VoxelUVW * SDFExtent;
+                FVector3d SamplePos = Data->Bounds.Min + VoxelUVW * SDFSize;
 
                 // 计算符号距离
                 double NearestDistSqr;
@@ -70,8 +70,6 @@ void FToolSDFGenerator::ComputeSDFData(TUniquePtr<FComputeData> Data)
                     SignedDist = (float)(bInside ? -NearestDist : NearestDist);
                 }
 
-                // 编码距离值
-                //int16 Encoded = (int16)FMath::Clamp(SignedDist, -32767.0f, 32767.0f);
                 int32 Index = Z * (Data->TextureSize * Data->TextureSize) + Y * Data->TextureSize + X;
                 if (Index < TotalVoxels) // 边界检查
                 {

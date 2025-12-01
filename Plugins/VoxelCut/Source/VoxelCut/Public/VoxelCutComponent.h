@@ -8,7 +8,8 @@
 #include "VoxelCutMeshOp.h"
 #include "Components/DynamicMeshComponent.h"
 #include "ToolSDFGenerator.h"
-#include "UObject/WeakObjectPtr.h" 
+#include "UObject/WeakObjectPtr.h"
+#include "HAL/PlatformTime.h"
 #include "VoxelCutComponent.generated.h"
 
 using namespace UE::Geometry;
@@ -48,10 +49,10 @@ public:
 
 	// 开始/停止切削
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	void StartCutting();
+	void EnableCutting();
     
 	UFUNCTION(BlueprintCallable, Category = "Voxel Cut")
-	void StopCutting();
+	void DisableCutting();
 
 	// 初始化切削系统
 	void InitializeCutSystem();
@@ -125,7 +126,7 @@ private:
 	
 	// 状态管理
 	ECutState CutState;
-	std::atomic<bool> bIsCutting;      // 用户是否在切削模式
+	std::atomic<bool> bCuttingEnabled;      // 用户是否在切削模式
     
 	// 工具位置跟踪
 	FVector LastToolPosition;
@@ -172,6 +173,10 @@ private:
 
 
 // Debug 相关信息
+
+	double StartCutTimeStamp = 0.0;
+	double VoxelUpdatedTimeStamp = 0.0;
+	double CutCompleteTimeStamp = 0.0;
 	
 	/** 调试框信息 */
 	struct FDebugBoxInfo
