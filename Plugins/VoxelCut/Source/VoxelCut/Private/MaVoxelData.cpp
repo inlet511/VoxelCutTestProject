@@ -151,7 +151,7 @@ void FMaVoxelData::BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransfo
         	std::atomic<bool> bNodeNonEmpty(false);  // 原子变量，用于线程安全地更新节点状态
 
 
-			FVector3d WorldPos = Node.Bounds.Center();            
+			FVector3d WorldPos = Node.Bounds.Center();
 			float Distance = CalculateDistanceToMesh(Spatial, Winding, WorldPos);
 			Node.Voxel = Distance;
             

@@ -56,9 +56,7 @@ namespace UE
     
 			// 初始化体素数据（首次使用）
 			bool InitializeVoxelData(FProgressCancel* Progress);
-    
-			// 增量切削（基于现有体素数据）
-			bool IncrementalCut(FProgressCancel* Progress);
+
 
 			FDynamicMesh3* GetResultMesh() const
 			{

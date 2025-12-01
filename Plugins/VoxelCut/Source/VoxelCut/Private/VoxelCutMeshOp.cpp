@@ -34,27 +34,8 @@ void FVoxelCutMeshOp::CalculateResult(FProgressCancel* Progress)
 		return;
 	}
 
-	//double CutStart = FPlatformTime::Seconds();  // 开始时间    
-	// 增量更新：基于现有体素数据进行切削
-	if (!IncrementalCut(Progress))
-	{
-		return;
-	}
-	//double CutEnd = FPlatformTime::Seconds();    // 结束时间
-	// 打印切削耗时
-	//double CutTimeMs = (CutEnd - CutStart) * 1000.0;
-	//UE_LOG(LogTemp, Log, TEXT("切削操作（IncrementalCut）耗时: %.2f 毫秒"), CutTimeMs);
 
-	// 生成最终网格 - 修正计时
-	double GenerateStart = FPlatformTime::Seconds(); // 开始时间
-	// 生成最终网格
-	ConvertVoxelsToMesh(*PersistentVoxelData, Progress);
-
-	double GenerateEnd = FPlatformTime::Seconds(); // 结束时间
-
-	// 打印模型生成耗时
-	double GenerateTimeMs = (GenerateEnd - GenerateStart) * 1000.0;
-	UE_LOG(LogTemp, Warning, TEXT("模型生成耗时: %.2f 毫秒"), GenerateTimeMs);
+	UpdateLocalRegion(*PersistentVoxelData, *CutToolMesh, CutToolTransform, Progress);
 }
 
 bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
@@ -80,20 +61,6 @@ bool FVoxelCutMeshOp::InitializeVoxelData(FProgressCancel* Progress)
 	return success;
 }
 
-bool FVoxelCutMeshOp::IncrementalCut(FProgressCancel* Progress)
-{
-	if (!PersistentVoxelData.IsValid() || !CutToolMesh)
-	{
-		return false;
-	}
-
-	// 局部更新：只更新受刀具影响的区域
-	UpdateLocalRegion(*PersistentVoxelData, *CutToolMesh,
-	                  CutToolTransform, Progress);
-
-
-	return !(Progress && Progress->Cancelled());
-}
 
 double GetDistanceToMesh(const FDynamicMeshAABBTree3& Spatial, TFastWindingTree<FDynamicMesh3> Winding,
                          const FVector3d& LocalPoint, const FVector3d& WorldPoint)
@@ -136,9 +103,9 @@ bool FVoxelCutMeshOp::VoxelizeMesh(const FDynamicMesh3& Mesh, const FTransform& 
 void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynamicMesh3& ToolMesh,
                                         const FTransform& ToolTransform, FProgressCancel* Progress)
 {
-	if (!TargetVoxels.IsValid())
+	if (!TargetVoxels.IsValid()|| !CutToolMesh)
 	{
-		UE_LOG(LogTemp, Error, TEXT("UpdateLocalRegion: TargetVoxels is not valid"));
+		UE_LOG(LogTemp, Error, TEXT("UpdateLocalRegion: [PersistentVoxelData OR CutToolMesh] is not valid"));
 		return;
 	}
 
@@ -235,10 +202,10 @@ void RecursivelyLogOctreeNode(const FOctreeNode& Node, int32 Level)
 	{
 		if (Node.bIsLeaf)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Leaf Node, L:%d, Bounds Min: %s, Bounds Max: %s, Value: %.2f"), Level, *Node.Bounds.Min.ToString(), *Node.Bounds.Max.ToString(), Node.Voxel);
+			UE_LOG(LogTemp, Warning, TEXT("Leaf, L:%d, Bounds Min: %s, Bounds Max: %s, Value: %.2f"), Level, *Node.Bounds.Min.ToString(), *Node.Bounds.Max.ToString(), Node.Voxel);
 		}
 		else {
-			UE_LOG(LogTemp, Warning, TEXT("None Leaf Node, Bounds Min: %s, Bounds Max %s"), *Node.Bounds.Min.ToString(), *Node.Bounds.Max.ToString());
+			UE_LOG(LogTemp, Warning, TEXT("NoneLeaf, L:%d, Bounds Min: %s, Bounds Max %s"), Level, *Node.Bounds.Min.ToString(), *Node.Bounds.Max.ToString());
 
 			int32 NewLevel = Level + 1;
 			for (auto ChildNode : Node.Children)
@@ -262,7 +229,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 {
 	if (Progress && Progress->Cancelled()) return;
 
-	LogVoxelData(Voxels);
+	//LogVoxelData(Voxels);
 
 	// 检查体素数据有效性
 	if (!Voxels.IsValid())
@@ -298,10 +265,15 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 	};
 
 	MarchingCubes.IsoValue = 0.0f;
+	bool MeshOK = MarchingCubes.Validate();
+	if (!MeshOK)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Mesh No OK"));
+		return;
+	}
+	MarchingCubes.Generate();
 
-
-	ResultMesh->Copy(&MarchingCubes.Generate());
-
+	ResultMesh->Copy(&MarchingCubes);
 	// 平滑模型
 	//SmoothGeneratedMesh(*ResultMesh, SmoothingIteration);
 
