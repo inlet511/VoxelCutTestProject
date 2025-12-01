@@ -109,6 +109,8 @@ void UVoxelCutComponent::OnCutComplete(FDynamicMesh3* ResultMesh)
 	// 更新状态
 	FScopeLock Lock(&StateLock);
 	CutState = ECutState::Completed;
+
+	VisualizeOctreeNode();
 }
 
 void UVoxelCutComponent::InitializeCutSystem()
@@ -377,21 +379,12 @@ void UVoxelCutComponent::VisualizeOctreeNodeRecursive(const FOctreeNode& Node, i
 	BoxInfo.Color = NodeColor;
 	DebugBoxes.Add(BoxInfo);
 	
-	// 如果是叶子节点，绘制额外的信息
+	// 如果是叶子节点
 	if (Node.bIsLeaf)
 	{
-		FVector TextLocation = Center + FVector(0, 0, Extent.Z + 10.0f);
-		FString VoxelInfo = FString::Printf(TEXT("%.2f"), Node.Voxel);
-		DrawDebugString(GetWorld(), Center, VoxelInfo, nullptr, FColor::Green, -1.0f, true);
-		//DrawDebugBox(GetWorld(), Center, Extent, NodeColor, true, -1.0f, 0, 0.5f);
-	}
-	else
-	{
-		FString VoxelInfo = FString::Printf(TEXT("NotLeaf"), Node.Voxel);
-		DrawDebugString(GetWorld(), Center, VoxelInfo, nullptr, FColor::Red, -1.0f, true);
-		// 非叶子节点显示深度信息
-		/*FString DepthInfo = FString::Printf(TEXT("Node L%d"), Depth);
-		DrawDebugString(GetWorld(), Center, DepthInfo, nullptr, NodeColor, -1.0f, true);*/
+		FString VoxelInfo = FString::Printf(TEXT("L"));
+		NodeColor = Node.Voxel >= 0 ? FColor::Red : FColor::Green;
+		DrawDebugBox(GetWorld(), Center, Extent/4.0f, NodeColor, true, -1.0f, 0, 0.5f);
 	}
 	
 	// 递归处理子节点
@@ -404,6 +397,7 @@ void UVoxelCutComponent::VisualizeOctreeNodeRecursive(const FOctreeNode& Node, i
 void UVoxelCutComponent::ClearOctreeVisualization()
 {
 	DebugBoxes.Empty();
+	FlushPersistentDebugLines(GetWorld());
 }
 
 void UVoxelCutComponent::PrintOctreeDetails()

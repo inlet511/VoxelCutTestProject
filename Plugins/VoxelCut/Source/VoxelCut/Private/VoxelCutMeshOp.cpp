@@ -226,10 +226,43 @@ void FVoxelCutMeshOp::UpdateLocalRegion(FMaVoxelData& TargetVoxels, const FDynam
 }
 
 
+
+
+void RecursivelyLogOctreeNode(const FOctreeNode& Node, int32 Level)
+{
+	if (Node.bIsEmpty) return;
+	else
+	{
+		if (Node.bIsLeaf)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Leaf Node, L:%d, Bounds Min: %s, Bounds Max: %s, Value: %.2f"), Level, *Node.Bounds.Min.ToString(), *Node.Bounds.Max.ToString(), Node.Voxel);
+		}
+		else {
+			UE_LOG(LogTemp, Warning, TEXT("None Leaf Node, Bounds Min: %s, Bounds Max %s"), *Node.Bounds.Min.ToString(), *Node.Bounds.Max.ToString());
+
+			int32 NewLevel = Level + 1;
+			for (auto ChildNode : Node.Children)
+			{
+				RecursivelyLogOctreeNode(ChildNode, NewLevel);
+			}
+		}
+
+	}
+
+}
+
+void LogVoxelData(const FMaVoxelData& Voxels)
+{
+	FOctreeNode RootNode = Voxels.OctreeRoot;
+	RecursivelyLogOctreeNode(RootNode, 0);
+}
+
+
 void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressCancel* Progress)
 {
 	if (Progress && Progress->Cancelled()) return;
 
+	LogVoxelData(Voxels);
 
 	// 检查体素数据有效性
 	if (!Voxels.IsValid())

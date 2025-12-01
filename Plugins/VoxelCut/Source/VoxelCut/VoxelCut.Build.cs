@@ -6,9 +6,9 @@ public class VoxelCut : ModuleRules
 {
 	public VoxelCut(ReadOnlyTargetRules Target) : base(Target)
 	{
-        // ÆôÓÃC++Òì³£´¦Àí
+        // ï¿½ï¿½ï¿½ï¿½C++ï¿½ì³£ï¿½ï¿½ï¿½ï¿½
         bEnableExceptions = true;
-        // ÆôÓÃÔËÐÐÊ±ÀàÐÍÐÅÏ¢(RTTI)
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢(RTTI)
         bUseRTTI = true;
 
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
@@ -32,7 +32,8 @@ public class VoxelCut : ModuleRules
 			{
 				"Core",
 				"GeometryCore",
-				"VoxelCutShaders"
+				"VoxelCutShaders",
+				"UMG"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
