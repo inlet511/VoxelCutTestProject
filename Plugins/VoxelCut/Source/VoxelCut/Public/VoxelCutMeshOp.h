@@ -20,7 +20,8 @@ namespace UE
 		public:
 			virtual ~FVoxelCutMeshOp() {}
 
-			DECLARE_DELEGATE(FOnVoxelDataUpdated);
+
+			DECLARE_DELEGATE_OneParam(FOnVoxelDataUpdated, bool);
 			FOnVoxelDataUpdated OnVoxelDataUpdated;
 
 			// 输入：目标网格和刀具网格

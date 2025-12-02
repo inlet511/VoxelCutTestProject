@@ -39,13 +39,7 @@ struct VOXELCUT_API FMaVoxelData
 	
 	void BuildOctreeFromMesh(const FDynamicMesh3& Mesh, const FTransform& Transform);
 	float GetValueAtPosition(const FVector3d& WorldPos) const;
-	void UpdateLeafNode(
-		FOctreeNode& LeafNode,
-		const FAxisAlignedBox3d& UpdateBounds,
-		const TFunctionRef<float(const FVector3d&)>& UpdateFunction);
-	void UpdateRegion(const FAxisAlignedBox3d& UpdateBounds, const TFunctionRef<float(const FVector3d&)>& UpdateFunction);
-
-	// 调试
+	
 	void DebugLogOctreeStats() const;
 
 	// 获取用于Marching Cubes的边界

@@ -94,9 +94,6 @@ void FVoxelCutMeshOp::UpdateLocalRegion()
 	// 切削工具的扩展边界
 	FAxisAlignedBox3d OriginalBounds = CutToolMesh->GetBounds();
 	FAxisAlignedBox3d TransformedBounds(OriginalBounds, CutToolTransform);
-	FVector3d ExpandedMin = TransformedBounds.Min - FVector3d(UpdateMargin * PersistentVoxelData->MarchingCubeSize);
-	FVector3d ExpandedMax = TransformedBounds.Max + FVector3d(UpdateMargin * PersistentVoxelData->MarchingCubeSize);
-	FAxisAlignedBox3d ToolExtendedBounds(ExpandedMin, ExpandedMax);
 
 	double StartTime = FPlatformTime::Seconds();
 
@@ -104,8 +101,16 @@ void FVoxelCutMeshOp::UpdateLocalRegion()
 	AffectedNodes.Empty();
 	PersistentVoxelData->OctreeRoot.CollectAffectedNodes(TransformedBounds, AffectedNodes);
 	uint32 NodeCount = AffectedNodes.Num();
+	// 如果没有受到影响的叶子节点，直接返回，并设置状态
 	if (NodeCount == 0)
+	{
+		if (OnVoxelDataUpdated.IsBound())
+		{
+			OnVoxelDataUpdated.Execute(false);
+		}
 		return;
+	}
+		
 
 	double EndTime = FPlatformTime::Seconds();
 
@@ -155,14 +160,18 @@ void FVoxelCutMeshOp::UpdateLocalRegion()
 		    for (int32 i = 0; i < AffectedNodesCopy.Num(); i++)
 		    {
 			    FOctreeNode* Node = AffectedNodesCopy[i];
-			    const FlatOctreeNode& ResultNode = ResultNodes[i];
+			    const FlatOctreeNode& ResultNode = ResultNodes[i];		    	
 				Node->Voxel = ResultNode.Voxel;
+		    	if (ResultNode.Voxel > 0.0f)
+		    	{
+		    		Node->bIsEmpty = true;
+		    	}
 		    }
 
 		    // 6. 触发模型更新回调
 		    if (OnVoxelDataUpdated.IsBound())
 		    {
-			    OnVoxelDataUpdated.Execute();
+			    OnVoxelDataUpdated.Execute(true);
 		    }
 	    });
 }

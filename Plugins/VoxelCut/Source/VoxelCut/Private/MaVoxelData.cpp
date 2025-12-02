@@ -91,7 +91,7 @@ bool FOctreeNode::IntersectsBounds(const FAxisAlignedBox3d& OtherBounds) const
 void FOctreeNode::CollectAffectedNodes(const FAxisAlignedBox3d& InBounds, TArray<FOctreeNode*>& OutNodes)
 {
 	if (!IntersectsBounds(InBounds)) return;
-	if (bIsLeaf==true) {
+	if (bIsLeaf==true && bIsEmpty!=true) {
 		OutNodes.Add(this);
 	} else {
 		for (FOctreeNode& Child : Children) {
@@ -225,43 +225,6 @@ float FMaVoxelData::GetValueAtPosition(const FVector3d& WorldPos) const
     return QueryNode(OctreeRoot, WorldPos);
 }
 
-void FMaVoxelData::UpdateLeafNode(
-	FOctreeNode& LeafNode,
-	const FAxisAlignedBox3d& UpdateBounds,
-	const TFunctionRef<float(const FVector3d&)>& UpdateFunction)
-{  
-    if (LeafNode.bIsLeaf)
-    {
-        if (LeafNode.bIsEmpty) return;
-
-        // 更新叶子节点内的单个体素
-        // 计算节点中心点作为体素位置
-        FVector3d NodeCenter = (LeafNode.Bounds.Min + LeafNode.Bounds.Max) * 0.5;
-
-        // 检查中心点是否在更新范围内
-        if (UpdateBounds.Contains(NodeCenter))
-        {
-            float NewValue = UpdateFunction(NodeCenter);
-            LeafNode.Voxel = NewValue;
-        }
-    }
-      
-}
-
-void FMaVoxelData::UpdateRegion(const FAxisAlignedBox3d& UpdateBounds,
-                                const TFunctionRef<float(const FVector3d&)>& UpdateFunction)
-{
-	// 1. 收集受到影响的叶子节点
-	TArray<FOctreeNode*> AffectedNodes;
-	OctreeRoot.CollectAffectedNodes(UpdateBounds, AffectedNodes);
-
-	// 2. 并行处理所有叶子节点
-	ParallelFor(AffectedNodes.Num(), [&](int32 i){
-		FOctreeNode* Node = AffectedNodes[i];
-		UpdateLeafNode(*Node,UpdateBounds,UpdateFunction);
-	});
-	
-}
 
 void FMaVoxelData::DebugLogOctreeStats() const
 {

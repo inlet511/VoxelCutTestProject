@@ -34,12 +34,24 @@ void UVoxelCutComponent::InitializeCutSystem()
 		// 绑定体素数据更新回调
 		// 使用 TWeakObjectPtr 包装 UObject 指针，避免悬垂引用
 		TWeakObjectPtr<UVoxelCutComponent> ThisWeakPtr(this);
-		CutOp->OnVoxelDataUpdated.BindLambda([ThisWeakPtr]()
+		CutOp->OnVoxelDataUpdated.BindLambda([ThisWeakPtr](bool In_bVoxelModified)
 		{
-			if (ThisWeakPtr.IsValid())
+			if (In_bVoxelModified)
 			{
-				ThisWeakPtr->OnVoxelDataUpdated();
+				if (ThisWeakPtr.IsValid())
+				{
+					ThisWeakPtr->OnVoxelDataUpdated();
+				}
+			}else // 无需更新，直接设置为Completed
+			{
+				if (ThisWeakPtr.IsValid())
+				{
+					FScopeLock Lock(&ThisWeakPtr->StateLock);
+					ThisWeakPtr->CutState = ECutState::Completed;
+				}
 			}
+			
+			
 		});
 	}
     
@@ -207,12 +219,15 @@ void UVoxelCutComponent::OnVoxelDataUpdated()
 	VoxelUpdatedTimeStamp = FPlatformTime::Seconds();
 	
 	// 在游戏线程生成新的网格
-	Async(EAsyncExecution::TaskGraphMainThread, [this]()
+	Async(EAsyncExecution::ThreadPool, [this]()
 	{
 		FProgressCancel Cancel;
 		CutOp->ConvertVoxelsToMesh(*CutOp->PersistentVoxelData, &Cancel);
 		FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();
-		OnCutComplete(ResultMesh);
+		Async(EAsyncExecution::TaskGraphMainThread, [this, ResultMesh]()
+		{
+			OnCutComplete(ResultMesh);
+		});		
 	});
 }
 
