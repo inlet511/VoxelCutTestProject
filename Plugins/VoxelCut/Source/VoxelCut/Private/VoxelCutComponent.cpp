@@ -218,12 +218,13 @@ void UVoxelCutComponent::OnVoxelDataUpdated()
 
 	VoxelUpdatedTimeStamp = FPlatformTime::Seconds();
 	
-	// 在游戏线程生成新的网格
+	// 在线程池生成新模型
 	Async(EAsyncExecution::ThreadPool, [this]()
 	{
 		FProgressCancel Cancel;
 		CutOp->ConvertVoxelsToMesh(*CutOp->PersistentVoxelData, &Cancel);
 		FDynamicMesh3* ResultMesh = CutOp->GetResultMesh();
+		// 回到主线程设置模型
 		Async(EAsyncExecution::TaskGraphMainThread, [this, ResultMesh]()
 		{
 			OnCutComplete(ResultMesh);

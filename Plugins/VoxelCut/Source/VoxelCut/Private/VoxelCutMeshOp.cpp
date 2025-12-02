@@ -247,7 +247,7 @@ void FVoxelCutMeshOp::ConvertVoxelsToMesh(const FMaVoxelData& Voxels, FProgressC
 	ResultMesh->Copy(&MarchingCubes);
 	
 	// 平滑模型
-	//SmoothGeneratedMesh(*ResultMesh, SmoothingIteration);
+	SmoothGeneratedMesh(*ResultMesh, SmoothingIteration);
 
 	UE_LOG(LogTemp, Warning, TEXT("Generated mesh triangle count: %d"), ResultMesh->TriangleCount());
 
