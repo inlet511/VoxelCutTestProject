@@ -81,6 +81,8 @@ void UGPUSDFCutter::UpdateToolTransform(const FTransform& InToolTransform)
 	bToolTransformUpdated = true;
 }
 
+/*
+
 void UGPUSDFCutter::SetTargetMeshComponent(UDynamicMeshComponent* InTargetMeshComponent)
 {
 	TargetMeshComponent = InTargetMeshComponent;
@@ -91,6 +93,7 @@ void UGPUSDFCutter::SetTargetMeshComponent(UDynamicMeshComponent* InTargetMeshCo
 		TargetMeshComponent->SetDynamicMesh(MakeShared<UE::Geometry::FDynamicMesh3>());
 	}
 }
+*/
 
 void UGPUSDFCutter::InitGPUResources()
 {
@@ -99,26 +102,33 @@ void UGPUSDFCutter::InitGPUResources()
 
 	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this](FRHICommandListImmediate& RHICmdList)
 	{
-		FRDGBuilder GraphBuilder(RHICmdList);
-
 		check(OriginalSDFTexture->GetPixelFormat() == PF_R32_FLOAT && ToolSDFTexture->GetPixelFormat() == PF_R32_FLOAT);
-
-		FRDGTextureRef OriginalTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(OriginalSDFTexture->GetResource()->GetTexture3DRHI(),TEXT("OrigianlTexture")));
-		OriginalSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(OriginalTextureRef);
-
-		FRDGTextureRef ToolTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ToolSDFTexture->GetResource()->GetTextureRHI(),TEXT("ToolSDFTexture")));
-		ToolSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(ToolTextureRef);			
-
 		int32 SourceSizeX = OriginalSDFTexture->GetSizeX();
 		int32 SourceSizeY = OriginalSDFTexture->GetSizeY();
 		int32 SourceSizeZ = OriginalSDFTexture->GetSizeZ();
 
-		// 2. 创建动态SDF纹理（RWTexture3D，可写+可读）
+		// 1. 存储外部纹理的RHI引用（不要ConvertToExternalTexture）
+		OriginalSDFRHI = OriginalSDFTexture->GetResource()->GetTexture3DRHI();
+		ToolSDFRHI = ToolSDFTexture->GetResource()->GetTextureRHI();
+
+		FRDGBuilder GraphBuilder(RHICmdList);
+
+		// 2. 注册外部纹理到Render Graph
+		FRDGTextureRef OriginalTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(OriginalSDFRHI,TEXT("OrigianlTexture")));
+		FRDGTextureRef ToolTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ToolSDFRHI,TEXT("ToolSDFTexture")));
+
+		// 3. 创建动态SDF纹理（RWTexture3D，可写+可读）
 		FRDGTextureDesc DynamicSDFDesc = FRDGTextureDesc::Create3D(FIntVector(SourceSizeX, SourceSizeY, SourceSizeZ), PF_R32_FLOAT,FClearValueBinding::None, TexCreate_UAV | TexCreate_CPUReadback);
 		FRDGTextureRef DynamicSDFTextureRef = GraphBuilder.CreateTexture(DynamicSDFDesc,TEXT("DynamicSDF"));
-		// 3. 初始化动态SDF为原始SDF值（首次启动时拷贝）
-		AddCopyTexturePass(GraphBuilder, OriginalTextureRef, DynamicSDFTextureRef);
+		// 注册为外部纹理
 		DynamicSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(DynamicSDFTextureRef);
+
+		// 4. 初始化动态SDF为原始SDF值（首次启动时拷贝）
+		AddCopyTexturePass(GraphBuilder, OriginalTextureRef, DynamicSDFTextureRef);		
+
+		
+
+		GraphBuilder.Execute();
 		
 
 		bGPUResourcesInitialized = true;
@@ -129,6 +139,7 @@ void UGPUSDFCutter::InitGPUResources()
 
 void UGPUSDFCutter::DispatchRenderGraph()
 {
+	/*
 	if (!bGPUResourcesInitialized)
 		return;
 
@@ -272,10 +283,14 @@ void UGPUSDFCutter::DispatchRenderGraph()
 			}
 		}
 		);
+
+	*/
 }
 
+/*
 void UGPUSDFCutter::ReadbackMeshData(TRDGBufferRef<FVector> VertexBuffer, TRDGBufferRef<FIntVector> TriangleBuffer, int32 NumVertices, int32 NumTriangles)
 {
+	
 	FRHICommandListImmediate& RHICmdList = GRHICommandList.GetImmediateCommandList();
 
 	// 切换双缓冲（当前缓冲区用于存储新数据）
@@ -308,11 +323,14 @@ void UGPUSDFCutter::ReadbackMeshData(TRDGBufferRef<FVector> VertexBuffer, TRDGBu
 	RHICmdList.ImmediateFlush(EImmediateFlushType::FlushRHIThread);
 
 	bHasValidMeshData = true;
+	
 }
+*/
 
 // 更新DynamicMeshComponent（渲染生成的网格）
 void UGPUSDFCutter::UpdateDynamicMesh(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles)
 {
+	/*
 	if (!TargetMeshComponent || Vertices.Num() == 0 || Triangles.Num() == 0)
 		return;
 
@@ -351,8 +369,11 @@ void UGPUSDFCutter::UpdateDynamicMesh(const TArray<FVector>& Vertices, const TAr
 
 	// 触发回调
 	OnMeshGenerated.Broadcast(TargetMeshComponent);
+
+	*/
 }
 
+/*
 // 计算工具在原始物体空间的AABB（用于优化SDF更新范围，只更新工具影响的体素）
 FAxisAlignedBox UGPUSDFCutter::ComputeToolAABBInOriginalSpace(const FTransform& ToolTransform)
 {
@@ -381,3 +402,4 @@ FAxisAlignedBox UGPUSDFCutter::ComputeToolAABBInOriginalSpace(const FTransform& 
 	ToolAABB = ToolAABB.Intersect(OriginalBounds);
 	return ToolAABB;
 }
+*/

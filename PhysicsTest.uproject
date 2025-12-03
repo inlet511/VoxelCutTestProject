@@ -32,6 +32,10 @@
 		{
 			"Name": "VoxelCut",
 			"Enabled": true
+		},
+		{
+			"Name": "SDFCut",
+			"Enabled": true
 		}
 	]
 }

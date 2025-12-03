@@ -24,12 +24,6 @@ public:
 	// 初始化SDF纹理（原始物体和切削工具）
 	void InitSDFTextures(UVolumeTexture* InOriginalSDF, UVolumeTexture* InToolSDF, const UE::Geometry::FAxisAlignedBox3d& InOriginalBounds, float InCubeSize = 5.0f);
 
-	// SDF纹理（CPU端引用）
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
-	UVolumeTexture* OriginalSDFTexture = nullptr;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
-	UVolumeTexture* ToolSDFTexture = nullptr;
-
 	// 每帧更新切削工具Transform
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
 	void UpdateToolTransform(const FTransform& InToolTransform);
@@ -70,7 +64,11 @@ private:
 	// 计算工具在原始物体空间的AABB（用于优化SDF更新范围）
 	UE::Geometry::FAxisAlignedBox3d ComputeToolAABBInOriginalSpace(const FTransform& ToolTransform);
 
-
+	// SDF纹理（CPU端引用）
+	UPROPERTY()
+	UVolumeTexture* OriginalSDFTexture = nullptr;
+	UPROPERTY()
+	UVolumeTexture* ToolSDFTexture = nullptr;
 
 	// 目标网格组件（用于渲染）
 	UPROPERTY()

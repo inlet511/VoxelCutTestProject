@@ -41,10 +41,6 @@
 		{
 			"Name": "MeshModelingToolset",
 			"Enabled": true
-		},
-		{
-			"Name": "RenderDocPlugin",
-			"Enabled": true
 		}
 	]
 }

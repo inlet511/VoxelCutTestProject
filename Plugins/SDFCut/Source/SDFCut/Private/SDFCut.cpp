@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "../Public/SDFCut.h"
+#include "SDFCut.h"
 #include "Interfaces/IPluginManager.h"
 
 #define LOCTEXT_NAMESPACE "FSDFCutModule"
@@ -8,7 +8,7 @@
 void FSDFCutModule::StartupModule()
 {
 	FString PluginShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("SDFCut"))->GetBaseDir(), TEXT("Shaders"));	
-	AddShaderSourceDirectoryMapping(TEXT("/Project/Shaders"), PluginShaderDir);    
+    AddShaderSourceDirectoryMapping(TEXT("/SDF/Shaders"), PluginShaderDir);  
 }
 
 void FSDFCutModule::ShutdownModule()
