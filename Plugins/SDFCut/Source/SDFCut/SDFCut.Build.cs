@@ -25,13 +25,8 @@ public class SDFCut : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"Core", 
-				"CoreUObject", 
-				"Engine", 
-				"RenderCore", 
-				"RHI",
-				"GeometryCore", 
-				"MeshDescription"
+				"Core",
+				"GeometryCore",
 			}
 			);
 			
@@ -39,12 +34,13 @@ public class SDFCut : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"RenderGraph",
-				"ShaderCore", 
-				"GlobalShader",
-				"DynamicMesh",
-				"GeometryCore",
-				"GeometryFramework"
+				"CoreUObject",
+				"Engine",
+				"Renderer",
+				"RenderCore",
+				"RHI",
+				"GeometryFramework", 
+				"Projects", 
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

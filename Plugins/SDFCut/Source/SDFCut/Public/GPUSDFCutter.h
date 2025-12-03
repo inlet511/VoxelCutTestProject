@@ -5,14 +5,15 @@
 #include "CoreMinimal.h"
 #include "BoxTypes.h"
 #include "Components/SceneComponent.h"
+#include "BoxTypes.h"
 #include "GPUSDFCutter.generated.h"
 
-DECLARE_DYNAMIC_DELEGATE_OneParam(FOnMeshGenerated, UDynamicMeshComponent*, MeshComponent);
+DECLARE_DYNAMIC_DELEGATE_OneParam(FOnMeshGenerated, UDynamicMeshComponent*, Component);
 
 class UVolumeTexture;
 class UDynamicMeshComponent;
 
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class SDFCUT_API UGPUSDFCutter : public USceneComponent
 {
 	GENERATED_BODY()
@@ -20,9 +21,9 @@ class SDFCUT_API UGPUSDFCutter : public USceneComponent
 public:
 	// Sets default values for this component's properties
 	UGPUSDFCutter();
-	
+
 	// 初始化SDF纹理（原始物体和切削工具）
-	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
+	//UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
 	void InitSDFTextures(UVolumeTexture* InOriginalSDF, UVolumeTexture* InToolSDF, const UE::Geometry::FAxisAlignedBox3d& InOriginalBounds, float InCubeSize = 5.0f);
 
 	// 每帧更新切削工具Transform
@@ -43,7 +44,7 @@ protected:
 public:
 	// Called every frame
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
-	                           FActorComponentTickFunction* ThisTickFunction) override;
+		FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
 	// 初始化GPU资源（纹理、缓冲区、Render Graph）
@@ -53,7 +54,7 @@ private:
 	void DispatchRenderGraph();
 
 	// 回读GPU生成的网格数据
-	void ReadbackMeshData(TRDGBufferRef<FVector> VertexBuffer, TRDGBufferRef<FIntVector> TriangleBuffer, int32 NumVertices, int32 NumTriangles);
+	void ReadbackMeshData(TRDGUniformBufferRef VertexBuffer, TRDGUniformBufferRef TriangleBuffer, int32 NumVertices, int32 NumTriangles);
 
 	// 用回读的数据更新DynamicMeshComponent
 	void UpdateDynamicMesh(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
@@ -81,9 +82,9 @@ private:
 	bool bToolTransformUpdated = false; // 标记Transform是否更新
 
 	// GPU资源
-	FTextureRHIRef OriginalSDFRHIRef;
-	FTextureRHIRef ToolSDFRHIRef;
-	FTextureRHIRef DynamicSDFRHIRef; // 动态SDF纹理（RWTexture3D）
+	TRefCountPtr<IPooledRenderTarget> OriginalSDFTexturePooled;
+	TRefCountPtr<IPooledRenderTarget> ToolSDFTexturePooled;
+	TRefCountPtr<IPooledRenderTarget> DynamicSDFTexturePooled;
 
 
 	// 双缓冲：避免回读阻塞，当前帧渲染上一帧的网格

@@ -3,9 +3,10 @@
 #include "CoreMinimal.h"
 #include "BoxTypes.h"
 #include "GlobalShader.h"
+#include "ShaderParameterStruct.h"
 #include "RenderGraphResources.h"
 
-BEGIN_UNIFORM_BUFFER_STRUCT(FCutterUniform,)
+BEGIN_UNIFORM_BUFFER_STRUCT(FCutterUniform, )
 	SHADER_PARAMETER(FMatrix44f, ToolTransform)
 	SHADER_PARAMETER(FMatrix44f, ToolInverseTransform)
 	SHADER_PARAMETER(FVector3f, ToolAABBMin)
@@ -41,12 +42,12 @@ struct FCutterShaderParams
 	FIntVector DynamicSDFDimensions;   // 动态SDF的分辨率（体素数量）
 };
 
-class FDynamicSDFUpdateCS: public FGlobalShader
+class FDynamicSDFUpdateCS : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FDynamicSDFUpdateCS)
+	DECLARE_GLOBAL_SHADER(FDynamicSDFUpdateCS);
 	SHADER_USE_PARAMETER_STRUCT(FDynamicSDFUpdateCS, FGlobalShader);
 
-	BEGIN_SHADER_PARAMETER_STRUCT(Parameters,)
+	BEGIN_SHADER_PARAMETER_STRUCT(Parameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FCutterUniform, GlobalParams)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSDFTextureUniform, SDFParams)
 		SHADER_PARAMETER(FVector3f, DynamicSDFBoundsMin)
@@ -57,7 +58,7 @@ class FDynamicSDFUpdateCS: public FGlobalShader
 
 class FMarchingCubesCS : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FMarchingCubesCS)
+	DECLARE_GLOBAL_SHADER(FMarchingCubesCS);
 	SHADER_USE_PARAMETER_STRUCT(FMarchingCubesCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(Parameters, )

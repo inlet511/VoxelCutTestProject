@@ -147,7 +147,7 @@ void FVoxelCutMeshOp::UpdateLocalRegion()
 	// 3. 调用ComputeShader并设置回调
 	FVoxlCutShaderInterface::Dispatch(
 		Params,
-	    [this, AffectedNodesCopy = AffectedNodes](TArray<FlatOctreeNode> ResultNodes)
+	    [this, AffectedNodesCopy = AffectedNodes](const TArray<FlatOctreeNode>& ResultNodes)
 	    {
 		    // 4. 处理GPU返回的结果
 		    if (ResultNodes.Num() != AffectedNodesCopy.Num())

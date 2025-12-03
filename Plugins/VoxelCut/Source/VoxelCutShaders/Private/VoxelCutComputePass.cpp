@@ -112,8 +112,8 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 						GPUBufferReadback->Unlock();
 
 						// 确保回调在游戏线程执行
-						AsyncTask(ENamedThreads::GameThread, [AsyncCallback, ResultArray]() {
-							AsyncCallback(ResultArray);
+						AsyncTask(ENamedThreads::GameThread, [AsyncCallback, ResultArray = MoveTemp(ResultArray)] ()mutable {
+							AsyncCallback(MoveTemp(ResultArray));
 							});
 
 						delete GPUBufferReadback;
