@@ -117,15 +117,22 @@ void UGPUSDFCutter::InitGPUResources()
 		FRDGTextureRef OriginalTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(OriginalSDFRHI,TEXT("OrigianlTexture")));
 		FRDGTextureRef ToolTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ToolSDFRHI,TEXT("ToolSDFTexture")));
 
-		// 3. 创建动态SDF纹理（RWTexture3D，可写+可读）
-		FRDGTextureDesc DynamicSDFDesc = FRDGTextureDesc::Create3D(FIntVector(SourceSizeX, SourceSizeY, SourceSizeZ), PF_R32_FLOAT,FClearValueBinding::None, TexCreate_UAV | TexCreate_CPUReadback);
-		FRDGTextureRef DynamicSDFTextureRef = GraphBuilder.CreateTexture(DynamicSDFDesc,TEXT("DynamicSDF"));
-		// 注册为外部纹理
+		// 3. 【关键修改】创建动态SDF纹理 - 移除不允许的标志
+		// 移除了 TexCreate_RenderTargetable 和 TexCreate_DepthStencilTargetable 等标志
+		// 仅保留UAV（用于写入）和ShaderResource（用于读取）标志
+		FRDGTextureDesc DynamicSDFDesc = FRDGTextureDesc::Create3D(
+			FIntVector(SourceSizeX, SourceSizeY, SourceSizeZ),
+			PF_R32_FLOAT,
+			FClearValueBinding::None,
+			TexCreate_UAV | TexCreate_ShaderResource // 只保留必要的标志
+		);
+		FRDGTextureRef DynamicSDFTextureRef = GraphBuilder.CreateTexture(DynamicSDFDesc, TEXT("DynamicSDF"));
+
+		// 4. 现在可以安全转换为外部纹理
 		DynamicSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(DynamicSDFTextureRef);
 
-		// 4. 初始化动态SDF为原始SDF值（首次启动时拷贝）
-		AddCopyTexturePass(GraphBuilder, OriginalTextureRef, DynamicSDFTextureRef);		
-
+		// 5. 初始化动态SDF为原始SDF值
+		AddCopyTexturePass(GraphBuilder, OriginalTextureRef, DynamicSDFTextureRef);
 		
 
 		GraphBuilder.Execute();
