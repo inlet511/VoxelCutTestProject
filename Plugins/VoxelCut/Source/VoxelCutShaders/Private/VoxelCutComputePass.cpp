@@ -7,8 +7,6 @@
 #include "RHICommandList.h"
 #include "RHIGPUReadback.h"
 
-UE_DISABLE_OPTIMIZATION
-
 // 实现UNIFORM_BUFFER
 IMPLEMENT_UNIFORM_BUFFER_STRUCT(FToolUB, "ToolUB");
 // 实现Global Shader
@@ -16,7 +14,7 @@ IMPLEMENT_GLOBAL_SHADER(FVoxelCutCS,"/Project/Shaders/VoxelCutCS.usf","MainCS",S
 
 void FVoxlCutShaderInterface::DispatchRenderThread(
 	FRHICommandListImmediate& RHICmdList,
-	FVoxelCutCSParams Params,	
+	FVoxelCutCSParams Params,
 	TFunction<void(TArray<FlatOctreeNode>)> AsyncCallback
 )
 {
@@ -144,4 +142,3 @@ void FVoxlCutShaderInterface::DispatchRenderThread(
 
 }
 
-UE_ENABLE_OPTIMIZATION

@@ -68,13 +68,13 @@ private:
 	void InitGPUResources();
     
 	// 局部更新调度
-	void DispatchLocalUpdate();
+	void DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles)> AsyncCallback);
     
 	// 工具在切削对象空间的Local AABB
 	void CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax);
     
 	// 数据回读和网格更新
-	void ReadbackAndUpdateMesh(FRDGBuffer* VertexBuffer, FRDGBuffer* TriangleBuffer, int32 NumVertices, int32 NumTriangles);
+	void ReadbackMeshData(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
 	void UpdateDynamicMesh(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
 
 	// 当前状态
@@ -109,6 +109,4 @@ private:
 	int32 CurrentMeshBuffer = 0;
 	bool bHasPendingMeshData = false;
 
-	// 渲染图事件
-	FGraphEventRef RenderGraphCompletionEvent;
 };

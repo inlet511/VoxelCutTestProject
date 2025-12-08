@@ -1,0 +1,6 @@
+// 常用结构定义
+struct FAxisAlignedBox3f
+{
+	float3 Min;
+	float3 Max;
+};

@@ -1,6 +1,8 @@
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
+#include "SharedData.ush"
+
 
 struct FCutterGlobalParams
 {
@@ -11,29 +13,13 @@ struct FCutterGlobalParams
     FAxisAlignedBox3f ToolAABB;
 };
 
-struct FSDFTextureParams
-{
-    Texture3D<float> OriginalSDF;
-    SamplerState OriginalSDFSampler;
-    Texture3D<float> ToolSDF;
-    SamplerState ToolSDFSampler;
-    RWTexture3D<float> DynamicSDF;
-};
 
-struct FMCOutputParams
-{
-    RWStructuredBuffer<float3> OutVertices;
-    RWStructuredBuffer<int3> OutTriangles;
-    RWBuffer<int> VertexCounter;
-    RWBuffer<int> TriangleCounter;
-};
+Texture3D<float> OriginalSDF;
+SamplerState OriginalSDFSampler;
+Texture3D<float> ToolSDF;
+SamplerState ToolSDFSampler;
+RWTexture3D<float> DynamicSDF;
 
-// 常用结构定义
-struct FAxisAlignedBox3f
-{
-    float3 Min;
-    float3 Max;
-};
 
 // 采样SDF纹理（将世界坐标转换为纹理UV）
 float SampleSDF(Texture3D<float> SDFTex, SamplerState Sampler, float3 WorldPos, FAxisAlignedBox SDFBounds)
@@ -53,29 +39,29 @@ float3 GetVoxelWorldPos(FIntVector VoxelIndex, FAxisAlignedBox Bounds, FIntVecto
 void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
 {
     // 转换为全局体素坐标
-    int3 GlobalVoxelID = Params.UpdateRegionMin + DispatchThreadID;
+    int3 GlobalVoxelID = CutUB.UpdateRegionMin + DispatchThreadID;
     
     // 边界检查
-    if (any(GlobalVoxelID >= Params.UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
+    if (any(GlobalVoxelID >= CutUB.UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
         return;
 
     // 1. 计算物体局部坐标（直接操作，不需要世界坐标转换）
-    float3 ObjectPos = VoxelToObjectPos(GlobalVoxelID, Params.SDFDimensions, Params.ObjectLocalBounds);
+    float3 ObjectPos = VoxelToObjectPos(GlobalVoxelID, CutUB.SDFDimensions, CutUB.ObjectLocalBounds);
     
     // 2. 采样原始物体SDF（直接在物体局部坐标系）
-    float3 ObjectUV = ObjectPosToUV(ObjectPos, Params.ObjectLocalBounds);
+    float3 ObjectUV = ObjectPosToUV(ObjectPos, CutUB.ObjectLocalBounds);
     float OriginalSDFValue = OriginalSDF.SampleLevel(OriginalSDFSampler, ObjectUV, 0);
     
     // 3. 将物体局部坐标转换到工具局部坐标系
-    float4 ToolSpacePos4 = mul(Params.ObjectToToolTransform, float4(ObjectPos, 1.0));
+    float4 ToolSpacePos4 = mul(CutUB.ObjectToToolTransform, float4(ObjectPos, 1.0));
     float3 ToolSpacePos = ToolSpacePos4.xyz / ToolSpacePos4.w;
     
     // 4. 检查是否在工具边界内（快速剔除）
-    if (!IsInToolLocalBounds(ToolSpacePos, Params.ToolLocalBounds))
+    if (!IsInToolLocalBounds(ToolSpacePos, CutUB.ToolLocalBounds))
         return;
     
     // 5. 采样工具SDF（工具局部坐标系）
-    float3 ToolUV = ToolPosToUV(ToolSpacePos, Params.ToolLocalBounds);
+    float3 ToolUV = ToolPosToUV(ToolSpacePos, CutUB.ToolLocalBounds);
     float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);
     
     // 6. 布尔运算：切削 = 保留物体内部(负值)且不在工具内部(正值)的部分
@@ -86,55 +72,4 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     
     // 7. 写入结果
     DynamicSDF[GlobalVoxelID] = ResultSDF;
-}
-
-[numthreads(8, 8, 8)] // 3D线程组，适配体素网格
-void DynamicSDFUpdateKernel(uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-    FIntVector VoxelIndex = FIntVector(DispatchThreadId.x, DispatchThreadId.y, DispatchThreadId.z);
-    
-    // 超出动态SDF范围，直接返回
-    if (VoxelIndex.X >= DynamicSDFDimensions.X || 
-        VoxelIndex.Y >= DynamicSDFDimensions.Y || 
-        VoxelIndex.Z >= DynamicSDFDimensions.Z)
-    {
-        return;
-    }
-
-    // 1. 计算当前体素在原始物体空间的位置
-    float3 VoxelWorldPos = GetVoxelWorldPos(VoxelIndex, DynamicSDFBounds, DynamicSDFDimensions);
-
-    // 2. 采样原始物体SDF
-    float OriginalSDFValue = SampleSDF(
-        SDFParams.OriginalSDF, 
-        SDFParams.OriginalSDFSampler, 
-        VoxelWorldPos, 
-        DynamicSDFBounds
-    );
-
-    // 3. 将体素位置转换到切削工具SDF空间（应用工具的逆Transform）
-    float3 ToolSpacePos = mul(float4(VoxelWorldPos, 1.0f), GlobalParams.ToolInverseTransform).xyz;
-
-    // 4. 采样切削工具SDF（工具SDF的范围默认是[-ToolSize, ToolSize]，需与预生成时一致）
-    float ToolSDFValue = SampleSDF(
-        SDFParams.ToolSDF, 
-        SDFParams.ToolSDFSampler, 
-        ToolSpacePos, 
-        FAxisAlignedBox(-50.0f, 50.0f) // 工具SDF预生成范围（需根据实际工具尺寸调整）
-    );
-
-    // 5. 布尔运算：保留原始物体（OriginalSDF < 0）且不在工具内部（ToolSDF > 0）的部分
-    // 动态SDF = max(原始SDF, -工具SDF) → 工具内部（ToolSDF < 0）时，动态SDF = -ToolSDF > 0，被Marching Cubes丢弃
-    float DynamicSDFValue = max(OriginalSDFValue, -ToolSDFValue);
-
-    // 6. 只更新工具AABB范围内的体素（优化性能）
-    if (GlobalParams.ToolAABB.Contains(VoxelWorldPos))
-    {
-        SDFParams.DynamicSDF[VoxelIndex] = DynamicSDFValue;
-    }
-    else
-    {
-        // 工具范围外，保持原始SDF值（避免重复计算）
-        SDFParams.DynamicSDF[VoxelIndex] = OriginalSDFValue;
-    }
 }
