@@ -26,7 +26,7 @@ public class SDFCut : ModuleRules
 			new string[]
 			{
 				"Core",
-				"GeometryCore",
+				"GeometryCore", "GeometryFramework",
 			}
 			);
 			

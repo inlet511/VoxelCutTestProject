@@ -6,6 +6,7 @@
 #include "Components/DynamicMeshComponent.h"
 #include "Engine/VolumeTexture.h"
 #include "RenderGraphUtils.h"
+#include "SDFShaderParameters.h"
 
 
 // Sets default values for this component's properties
@@ -24,9 +25,13 @@ void UGPUSDFCutter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (OriginalSDFTexture && ToolSDFTexture)
+	if (OriginalSDFTexture && ToolSDFTexture && TargetMeshActor)
 	{
-		InitGPUResources();
+		InitSDFTextures(
+			OriginalSDFTexture,
+			ToolSDFTexture,
+			TargetMeshActor->GetDynamicMeshComponent()->GetLocalBounds().GetBox(),
+			VoxelSize);
 	}
 
 }
@@ -35,263 +40,292 @@ void UGPUSDFCutter::BeginPlay()
 // Called every frame
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	if (!bGPUResourcesInitialized || !TargetMeshComponent)
+	if (!bGPUResourcesInitialized || !TargetMeshActor)
 		return;
 
-	// 只有Transform更新时才调度GPU计算
-	if (bToolTransformUpdated)
+	// 只有工具位置变化时才更新
+	if (bToolTransformDirty)
 	{
-		DispatchRenderGraph();
-		bToolTransformUpdated = false;
+		DispatchLocalUpdate();
+		bToolTransformDirty = false;
 	}
 
-	// 每帧更新网格（使用双缓冲的上一帧数据）
-	if (bHasValidMeshData)
+	// 更新网格（使用双缓冲的上一帧数据）
+	if (bHasPendingMeshData)
 	{
-		int32 RenderBufferIndex = (CurrentBufferIndex + 1) % 2;
-		UpdateDynamicMesh(ReadbackVertices[RenderBufferIndex], ReadbackTriangles[RenderBufferIndex]);
+		int32 ReadBufferIndex = (CurrentMeshBuffer + 1) % 2;
+		UpdateDynamicMesh(MeshVertices[ReadBufferIndex], MeshTriangles[ReadBufferIndex]);
+		bHasPendingMeshData = false;
 	}
 }
 
 
-void UGPUSDFCutter::InitSDFTextures(UVolumeTexture* InOriginalSDF, UVolumeTexture* InToolSDF, const UE::Geometry::FAxisAlignedBox3d& InOriginalBounds, float InCubeSize)
+void UGPUSDFCutter::InitSDFTextures(
+	UVolumeTexture* InOriginalSDF,
+	UVolumeTexture* InToolSDF,
+	const FBox& TargetLocalBox,
+	float InVoxelSize)
 {
-	check(InOriginalSDF && InToolSDF);
 	OriginalSDFTexture = InOriginalSDF;
 	ToolSDFTexture = InToolSDF;
-	OriginalBounds = InOriginalBounds;
-	CubeSize = InCubeSize;
+	VoxelSize = InVoxelSize;
 
-	// 计算动态SDF分辨率（根据边界和体素尺寸）
-	DynamicSDFDimensions.X = FMath::Max(32, FMath::RoundToInt((OriginalBounds.Max.X - OriginalBounds.Min.X) / CubeSize));
-	DynamicSDFDimensions.Y = FMath::Max(32, FMath::RoundToInt((OriginalBounds.Max.Y - OriginalBounds.Min.Y) / CubeSize));
-	DynamicSDFDimensions.Z = FMath::Max(32, FMath::RoundToInt((OriginalBounds.Max.Z - OriginalBounds.Min.Z) / CubeSize));
+	// 计算SDF尺寸
+	SDFDimensions.X = FMath::RoundToInt(TargetLocalBox.GetSize().X / VoxelSize);
+	SDFDimensions.Y = FMath::RoundToInt(TargetLocalBox.GetSize().Y / VoxelSize); 
+	SDFDimensions.Z = FMath::RoundToInt(TargetLocalBox.GetSize().Z / VoxelSize);
 
-	if (IsComponentTickEnabled())
-	{
-		InitGPUResources();
-	}
+	// 设置原始边界
+	TargetLocalBounds = TargetLocalBox;
+
+	CalculateToolDimensions();
+	CurrentToolTransform = GetToolWorldTransform();
+	LastToolTransform = CurrentToolTransform;
+
+	// 初始化GPU资源
+	InitGPUResources();
 }
 
 void UGPUSDFCutter::UpdateToolTransform(const FTransform& InToolTransform)
 {
+	LastToolTransform = CurrentToolTransform;
 	CurrentToolTransform = InToolTransform;
-	bToolTransformUpdated = true;
+	bToolTransformDirty = true;
 }
 
-/*
-
-void UGPUSDFCutter::SetTargetMeshComponent(UDynamicMeshComponent* InTargetMeshComponent)
+void UGPUSDFCutter::UpdateObjectTransform(const FTransform& InObjectTransform)
 {
-	TargetMeshComponent = InTargetMeshComponent;
-	if (TargetMeshComponent)
-	{
-		TargetMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-		TargetMeshComponent->SetGenerateOverlapEvents(true);
-		TargetMeshComponent->SetDynamicMesh(MakeShared<UE::Geometry::FDynamicMesh3>());
-	}
+	CurrentObjectTransform = InObjectTransform;
+	bToolTransformDirty = true; // 物体移动也需要更新
 }
-*/
 
 void UGPUSDFCutter::InitGPUResources()
-{
-	if (bGPUResourcesInitialized)
-		return;
+ {
+    if (bGPUResourcesInitialized)
+     	return;
+ 
+    ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this](FRHICommandListImmediate& RHICmdList)
+    {
+    	
+     	int32 SourceSizeX = OriginalSDFTexture->GetSizeX();
+     	int32 SourceSizeY = OriginalSDFTexture->GetSizeY();
+     	int32 SourceSizeZ = OriginalSDFTexture->GetSizeZ();
+ 
+     	// 1. 存储外部纹理的RHI引用（不要ConvertToExternalTexture）
+     	OriginalSDFRHI = OriginalSDFTexture->GetResource()->GetTexture3DRHI();
+     	ToolSDFRHI = ToolSDFTexture->GetResource()->GetTextureRHI();
+ 
+     	FRDGBuilder GraphBuilder(RHICmdList);
+ 
+     	// 2. 注册外部纹理到Render Graph
+     	FRDGTextureRef OriginalTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(OriginalSDFRHI,TEXT("OrigianlTexture")));
+     	FRDGTextureRef ToolTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ToolSDFRHI,TEXT("ToolSDFTexture")));
+ 
+     	// 3. 【关键修改】创建动态SDF纹理 - 移除不允许的标志
+     	// 移除了 TexCreate_RenderTargetable 和 TexCreate_DepthStencilTargetable 等标志
+     	// 仅保留UAV（用于写入）和ShaderResource（用于读取）标志
+     	FRDGTextureDesc DynamicSDFDesc = FRDGTextureDesc::Create3D(
+     		SDFDimensions,
+     		PF_R32_FLOAT,
+     		FClearValueBinding::None,
+     		TexCreate_UAV | TexCreate_ShaderResource // 只保留必要的标志
 
-	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this](FRHICommandListImmediate& RHICmdList)
-	{
-		check(OriginalSDFTexture->GetPixelFormat() == PF_R32_FLOAT && ToolSDFTexture->GetPixelFormat() == PF_R32_FLOAT);
-		int32 SourceSizeX = OriginalSDFTexture->GetSizeX();
-		int32 SourceSizeY = OriginalSDFTexture->GetSizeY();
-		int32 SourceSizeZ = OriginalSDFTexture->GetSizeZ();
-
-		// 1. 存储外部纹理的RHI引用（不要ConvertToExternalTexture）
-		OriginalSDFRHI = OriginalSDFTexture->GetResource()->GetTexture3DRHI();
-		ToolSDFRHI = ToolSDFTexture->GetResource()->GetTextureRHI();
-
-		FRDGBuilder GraphBuilder(RHICmdList);
-
-		// 2. 注册外部纹理到Render Graph
-		FRDGTextureRef OriginalTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(OriginalSDFRHI,TEXT("OrigianlTexture")));
-		FRDGTextureRef ToolTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ToolSDFRHI,TEXT("ToolSDFTexture")));
-
-		// 3. 【关键修改】创建动态SDF纹理 - 移除不允许的标志
-		// 移除了 TexCreate_RenderTargetable 和 TexCreate_DepthStencilTargetable 等标志
-		// 仅保留UAV（用于写入）和ShaderResource（用于读取）标志
-		FRDGTextureDesc DynamicSDFDesc = FRDGTextureDesc::Create3D(
-			FIntVector(SourceSizeX, SourceSizeY, SourceSizeZ),
-			PF_R32_FLOAT,
-			FClearValueBinding::None,
-			TexCreate_UAV | TexCreate_ShaderResource // 只保留必要的标志
-		);
+	);
 		FRDGTextureRef DynamicSDFTextureRef = GraphBuilder.CreateTexture(DynamicSDFDesc, TEXT("DynamicSDF"));
 
-		// 4. 现在可以安全转换为外部纹理
+    	// 5. 初始化动态SDF为原始SDF值
+    	AddCopyTexturePass(GraphBuilder, OriginalTextureRef, DynamicSDFTextureRef);
+    	
 		DynamicSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(DynamicSDFTextureRef);
-
-		// 5. 初始化动态SDF为原始SDF值
-		AddCopyTexturePass(GraphBuilder, OriginalTextureRef, DynamicSDFTextureRef);
-		
-
 		GraphBuilder.Execute();
-		
+	
 
 		bGPUResourcesInitialized = true;
-		UE_LOG(LogTemp, Log, TEXT("GPU SDF Cutter Resources Initialized. Dynamic SDF Dimensions: %d x %d x %d"),
-			DynamicSDFDimensions.X, DynamicSDFDimensions.Y, DynamicSDFDimensions.Z);
+    	UE_LOG(LogTemp, Log, TEXT("GPU SDF Cutter Local-Update Mode Initialized"));
 	});	
 }
 
-void UGPUSDFCutter::DispatchRenderGraph()
+void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax)
 {
-	/*
-	if (!bGPUResourcesInitialized)
+	if (!CutToolActor||!TargetMeshActor)
+	{
 		return;
+	}
 
-	// 1. 构建Render Graph（RDG核心）
-	FRDGBuilder GraphBuilder(RHIVendor::GetDefaultFeatureLevel());
+	// 切削对象的LocalBounds
+	FBox TargetLocalBounds = TargetMeshActor->GetDynamicMeshComponent()->GetLocalBounds().GetBox();
+	
+	// 工具本地AABB
+	FBox ToolLocalBox = CutToolActor->GetDynamicMeshComponent()->GetLocalBounds().GetBox();
 
-	// 2. 准备全局参数（仅传递Transform等轻量数据）
-	FCutterGlobalParams GlobalParams;
-	GlobalParams.IsoValue = 0.0f;
-	GlobalParams.CubeSize = CubeSize;
-	GlobalParams.ToolTransform = CurrentToolTransform.ToMatrixWithScale(); // 工具→原始物体空间变换
-	GlobalParams.ToolInverseTransform = GlobalParams.ToolTransform.Inverse();
-	GlobalParams.ToolAABB = ComputeToolAABBInOriginalSpace(CurrentToolTransform); // 优化更新范围
 
-	// 3. 绑定SDF纹理参数
-	FSDFTextureParams SDFParams;
-	SDFParams.OriginalSDF = GraphBuilder.RegisterExternalTexture(OriginalSDFRHIRef, TEXT("OriginalSDF"));
-	SDFParams.OriginalSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-	SDFParams.ToolSDF = GraphBuilder.RegisterExternalTexture(ToolSDFRef, TEXT("ToolSDF"));
-	SDFParams.ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-	SDFParams.DynamicSDF = GraphBuilder.RegisterExternalTexture(DynamicSDFRHIRef, TEXT("DynamicSDF"));
+	// Target 这里表示被切削对象的局部坐标系
+	FTransform TargetToWorld = TargetMeshActor->GetActorTransform();
+	FTransform WorldToTarget = TargetToWorld.Inverse();
+	FTransform ToolToTarget = WorldToTarget * ToolTransform;
 
-	// 4. 创建DynamicSDF更新Shader的参数缓冲区
-	auto DynamicSDFUpdateParams = GraphBuilder.AllocParameters<FDynamicSDFUpdateCS::Parameters>();
-	DynamicSDFUpdateParams->GlobalParams = GlobalParams;
-	DynamicSDFUpdateParams->SDFParams = SDFParams;
-	DynamicSDFUpdateParams->DynamicSDFBounds = OriginalBounds;
-	DynamicSDFUpdateParams->DynamicSDFDimensions = DynamicSDFDimensions;
+	FBox ToolBoundsInTargetSpace = ToolLocalBounds.TransformBy(ToolToTarget);
 
-	// 5. 调度DynamicSDF更新Compute Shader（3D线程组：适配体素网格）
-	TShaderMapRef<FDynamicSDFUpdateCS> DynamicSDFUpdateShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-	FIntVector DynamicSDFThreadGroupCount = FIntVector(
-		FMath::DivideAndRoundUp(DynamicSDFDimensions.X, 8),
-		FMath::DivideAndRoundUp(DynamicSDFDimensions.Y, 8),
-		FMath::DivideAndRoundUp(DynamicSDFDimensions.Z, 8)
+	// 求交集
+	FBox IntersectionBounds = ToolBoundsInTargetSpace.Overlap(TargetLocalBounds);
+
+	if (!IntersectionBounds.IsValid)
+	{
+		OutVoxelMin = FIntVector(0, 0, 0);
+		OutVoxelMax = FIntVector(0, 0, 0);
+		return;
+	}
+
+	// 5. 将交集区域转换为体素坐标
+	FVector VoxelMin = (IntersectionBounds.Min - TargetLocalBounds.Min) / VoxelSize;
+	FVector VoxelMax = (IntersectionBounds.Max - TargetLocalBounds.Min) / VoxelSize;
+	
+	OutVoxelMin = FIntVector(
+		FMath::FloorToInt(VoxelMin.X),
+		FMath::FloorToInt(VoxelMin.Y), 
+		FMath::FloorToInt(VoxelMin.Z)
 	);
-	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("DynamicSDFUpdate"),
-		DynamicSDFUpdateParams,
-		ERDGPassFlags::Compute,
-		[&](FRHICommandList& RHICmdList)
-		{
-			RHICmdList.SetComputeShader(DynamicSDFUpdateShader.GetComputeShader());
-			DynamicSDFUpdateShader->SetParameters(RHICmdList, *DynamicSDFUpdateParams);
-			RHICmdList.DispatchComputeShader(DynamicSDFThreadGroupCount.X, DynamicSDFThreadGroupCount.Y, DynamicSDFThreadGroupCount.Z);
-			DynamicSDFUpdateShader->UnsetParameters(RHICmdList, *DynamicSDFUpdateParams);
-		}
+    
+	OutVoxelMax = FIntVector(
+		FMath::CeilToInt(VoxelMax.X),
+		FMath::CeilToInt(VoxelMax.Y),
+		FMath::CeilToInt(VoxelMax.Z)
 	);
+	
+	// 限制在有效范围内
+	OutVoxelMin = OutVoxelMin.ComponentMax(FIntVector(0, 0, 0)); // 下限不能是负数
+	OutVoxelMax = OutVoxelMax.ComponentMin(SDFDimensions - FIntVector(1, 1, 1)); // 上限不能超过尺寸
+}
 
-	// 6. 创建Marching Cubes输出缓冲区（通过RDG创建TRDGBufferRef）
-	const int32 MaxVertices = DynamicSDFDimensions.X * DynamicSDFDimensions.Y * DynamicSDFDimensions.Z * 12;
-	const int32 MaxTriangles = DynamicSDFDimensions.X * DynamicSDFDimensions.Y * DynamicSDFDimensions.Z * 5;
 
-	TRDGBufferRef<FVector> VertexBuffer = GraphBuilder.CreateStructuredBuffer(
-		FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector), MaxVertices),
-		TEXT("MCVerticesBuffer")
-	);
-	TRDGBufferRef<FIntVector> TriangleBuffer = GraphBuilder.CreateStructuredBuffer(
-		FRDGBufferDesc::CreateStructuredDesc(sizeof(FIntVector), MaxTriangles),
-		TEXT("MCTrianglesBuffer")
-	);
-	TRDGBufferRef<int32> VertexCounterBuffer = GraphBuilder.CreateBuffer(
-		FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1),
-		TEXT("VertexCounterBuffer"),
-		ERDGResourceType::UAV
-	);
-	TRDGBufferRef<int32> TriangleCounterBuffer = GraphBuilder.CreateBuffer(
-		FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1),
-		TEXT("TriangleCounterBuffer"),
-		ERDGResourceType::UAV
-	);
+void UGPUSDFCutter::DispatchLocalUpdate()
+{
+    ENQUEUE_RENDER_COMMAND(GPUSDFCutter_LocalUpdate)([this](FRHICommandListImmediate& RHICmdList)
+    {
+        FRDGBuilder GraphBuilder(RHICmdList);
 
-	// 7. 清空计数器（每帧重置顶点/三角形索引）
-	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("ClearMCounters"),
-		ERDGPassFlags::Compute,
-		[&](FRHICommandList& RHICmdList)
-		{
-			RHICmdList.ClearUAV(VertexCounterBuffer->UAV, 0);
-			RHICmdList.ClearUAV(TriangleCounterBuffer->UAV, 0);
-		}
-	);
+        // 计算更新区域
+        FIntVector UpdateMin, UpdateMax;
+        CalculateToolAABBInTargetSpace(CurrentToolTransform, UpdateMin, UpdateMax);
+        
+        // 如果区域无效，跳过
+        if (UpdateMin.X > UpdateMax.X || UpdateMin.Y > UpdateMax.Y || UpdateMin.Z > UpdateMax.Z)
+            return;
 
-	// 8. 创建Marching Cubes Shader的参数缓冲区
-	auto MCParams = GraphBuilder.AllocParameters<FMarchingCubesCS::Parameters>();
-	MCParams->GlobalParams = GlobalParams;
-	MCParams->DynamicSDFBounds = OriginalBounds;
-	MCParams->DynamicSDFDimensions = DynamicSDFDimensions;
-	MCParams->DynamicSDF = SDFParams.DynamicSDF;
-	MCParams->MCOutputParams.OutVertices = VertexBuffer->UAV;
-	MCParams->MCOutputParams.OutTriangles = TriangleBuffer->UAV;
-	MCParams->MCOutputParams.VertexCounter = VertexCounterBuffer->UAV;
-	MCParams->MCOutputParams.TriangleCounter = TriangleCounterBuffer->UAV;
+        // 注册纹理
+        FRDGTextureRef OriginalTexture = GraphBuilder.RegisterExternalTexture(
+            CreateRenderTarget(OriginalSDFRHI, TEXT("OriginalSDFTexture")));
+        FRDGTextureRef ToolTexture = GraphBuilder.RegisterExternalTexture(
+            CreateRenderTarget(ToolSDFRHI, TEXT("ToolSDFTexture")));
+        FRDGTextureRef DynamicSDFTexture = GraphBuilder.RegisterExternalTexture(DynamicSDFTexturePooled, TEXT("DynamicSDFTexture"));
 
-	// 9. 调度Marching Cubes Compute Shader（3D线程组：适配体素网格）
-	TShaderMapRef<FMarchingCubesCS> MCShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-	FIntVector MCThreadGroupCount = FIntVector(
-		FMath::DivideAndRoundUp(DynamicSDFDimensions.X - 1, 8), // 立方体数量=体素数量-1
-		FMath::DivideAndRoundUp(DynamicSDFDimensions.Y - 1, 8),
-		FMath::DivideAndRoundUp(DynamicSDFDimensions.Z - 1, 8)
-	);
-	GraphBuilder.AddPass(
-		RDG_EVENT_NAME("MarchingCubesGenerate"),
-		MCParams,
-		ERDGPassFlags::Compute,
-		[&](FRHICommandList& RHICmdList)
-		{
-			RHICmdList.SetComputeShader(MCShader.GetComputeShader());
-			MCShader->SetParameters(RHICmdList, *MCParams);
-			RHICmdList.DispatchComputeShader(MCThreadGroupCount.X, MCThreadGroupCount.Y, MCThreadGroupCount.Z);
-			MCShader->UnsetParameters(RHICmdList, *MCParams);
-		}
-	);
+        // 1. 局部SDF更新
+        {
+            FLocalUpdateParams LocalParams;
+        	LocalParams.ObjectLocalBoundsMin = FVector3f(TargetLocalBounds.Min);
+			LocalParams.ObjectLocalBoundsMax = FVector3f(TargetLocalBounds.Max);
+			LocalParams.ToolLocalBoundsMin = FVector3f(ToolLocalBounds.Min);
+			LocalParams.ToolLocalBoundsMax = FVector3f(ToolLocalBounds.Max);
+			LocalParams.ObjectToToolTransform = FMatrix44f(ObjectToTool.ToMatrixWithScale());
+			LocalParams.ToolToObjectTransform = FMatrix44f(ObjectToTool.Inverse().ToMatrixWithScale());
+            LocalParams.SDFDimensions = SDFDimensions;
+            LocalParams.VoxelSize = VoxelSize;
+            LocalParams.IsoValue = 0.0f;
+            LocalParams.UpdateRegionMin = UpdateMin;
+            LocalParams.UpdateRegionMax = UpdateMax;
 
-	// 10. 回读计数器（获取实际生成的顶点/三角形数量）
-	TArray<int32> CounterReadbackData;
-	GraphBuilder.EnqueueReadback(VertexCounterBuffer, CounterReadbackData, 0, 1);
-	GraphBuilder.EnqueueReadback(TriangleCounterBuffer, CounterReadbackData, 1, 1);
+            auto* PassParams = GraphBuilder.AllocParameters<FLocalSDFUpdateCS::FParameters>();
+            PassParams->Params = LocalParams;
+            PassParams->OriginalSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(OriginalTexture));
+            PassParams->ToolSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ToolTexture));
+            PassParams->DynamicSDF = GraphBuilder.CreateUAV(DynamicSDFTexture);
+            PassParams->OriginalSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+            PassParams->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
-	// 11. 执行Render Graph并设置完成回调（异步回读网格数据）
-	LastRenderGraphEvent = GraphBuilder.Execute();
-	ENQUEUE_RENDER_COMMAND(RDG_MeshReadback)(
-		[this, VertexBuffer, TriangleBuffer](FRHICommandListImmediate& RHICmdList)
-		{
-			// 等待RDG执行完成
-			if (LastRenderGraphEvent.IsValid())
-			{
-				LastRenderGraphEvent->Wait();
-			}
+            // 只调度更新区域
+            FIntVector RegionSize = UpdateMax - UpdateMin + FIntVector(1);
+            FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(RegionSize, FIntVector(4, 4, 4));
 
-			// 读取计数器数据
-			int32 NumVertices = 0;
-			int32 NumTriangles = 0;
-			RHICmdList.ReadBufferReference(VertexCounterBuffer->Buffer, &NumVertices);
-			RHICmdList.ReadBufferReference(TriangleCounterBuffer->Buffer, &NumTriangles);
+            TShaderMapRef<FLocalSDFUpdateCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+            FComputeShaderUtils::AddPass(
+                GraphBuilder,
+                RDG_EVENT_NAME("LocalSDFUpdate"),
+                ComputeShader,
+                PassParams,
+                GroupCount
+            );
+        }
 
-			// 回读网格数据（仅当有有效数据时）
-			if (NumVertices > 0 && NumTriangles > 0)
-			{
-				ReadbackMeshData(VertexBuffer, TriangleBuffer, NumVertices, NumTriangles);
-			}
-		}
-		);
+        // 2. 局部Marching Cubes（只生成变化区域的网格）
+        {
+            // 网格生成区域比更新区域大1个体素（因为Marching Cubes需要相邻体素）
+            FIntVector GenerateMin = FIntVector::Max(UpdateMin - FIntVector(1), FIntVector(0));
+            FIntVector GenerateMax = FIntVector::Min(UpdateMax + FIntVector(1), SDFDimensions - FIntVector(2));
 
-	*/
+            // 创建输出缓冲区
+            const int32 MaxVertices = RegionSize.X * RegionSize.Y * RegionSize.Z * 5; // 保守估计
+            const int32 MaxTriangles = MaxVertices;
+
+            FRDGBufferRef VertexBuffer = GraphBuilder.CreateBuffer(
+                FRDGBufferDesc::CreateStructuredDesc(sizeof(FVector3f), MaxVertices), TEXT("Vertices"));
+            FRDGBufferRef TriangleBuffer = GraphBuilder.CreateBuffer(
+                FRDGBufferDesc::CreateStructuredDesc(sizeof(FIntVector), MaxTriangles), TEXT("Triangles"));
+            FRDGBufferRef VertexCounter = GraphBuilder.CreateBuffer(
+                FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1), TEXT("VertexCounter"));
+            FRDGBufferRef TriangleCounter = GraphBuilder.CreateBuffer(
+                FRDGBufferDesc::CreateBufferDesc(sizeof(int32), 1), TEXT("TriangleCounter"));
+
+            // 清空计数器
+            AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(VertexCounter, PF_R32_SINT), 0);
+            AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(TriangleCounter, PF_R32_SINT), 0);
+
+            FMCParams MCParams;
+            MCParams.SDFBoundsMin = FVector3f(TargetLocalBounds.Min);
+            MCParams.SDFBoundsMax = FVector3f(TargetLocalBounds.Max);
+            MCParams.SDFDimensions = SDFDimensions;
+            MCParams.IsoValue = 0.0f;
+            MCParams.GenerateRegionMin = GenerateMin;
+            MCParams.GenerateRegionMax = GenerateMax;
+
+            auto* PassParams = GraphBuilder.AllocParameters<FLocalMarchingCubesCS::FParameters>();
+            PassParams->Params = MCParams;
+            PassParams->DynamicSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(DynamicSDFTexture));
+            PassParams->OutVertices = GraphBuilder.CreateUAV(VertexBuffer);
+            PassParams->OutTriangles = GraphBuilder.CreateUAV(TriangleBuffer);
+            PassParams->VertexCounter = GraphBuilder.CreateUAV(VertexCounter);
+            PassParams->TriangleCounter = GraphBuilder.CreateUAV(TriangleCounter);
+
+            FIntVector MCGroupCount = FComputeShaderUtils::GetGroupCount(
+                GenerateMax - GenerateMin + FIntVector(1), FIntVector(4, 4, 4));
+
+            TShaderMapRef<FLocalMarchingCubesCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+            FComputeShaderUtils::AddPass(
+                GraphBuilder,
+                RDG_EVENT_NAME("LocalMarchingCubes"),
+                ComputeShader,
+                PassParams,
+                MCGroupCount
+            );
+
+            // 设置回读
+            TRefCountPtr<FRDGPooledBuffer> PooledVertexBuffer, PooledTriangleBuffer;
+            GraphBuilder.QueueBufferExtraction(VertexBuffer, &PooledVertexBuffer);
+            GraphBuilder.QueueBufferExtraction(TriangleBuffer, &PooledTriangleBuffer);
+            GraphBuilder.QueueBufferExtraction(VertexCounter, &PooledVertexBuffer);
+            GraphBuilder.QueueBufferExtraction(TriangleCounter, &PooledTriangleBuffer);
+
+            // 异步回读
+            RenderGraphCompletionEvent = GraphBuilder.Execute();
+            ENQUEUE_RENDER_COMMAND(ReadbackMeshData)([this, PooledVertexBuffer, PooledTriangleBuffer](FRHICommandListImmediate& RHICmdList)
+            {
+                if (RenderGraphCompletionEvent.IsValid())
+                    RenderGraphCompletionEvent->Wait();
+
+                // 这里实现数据回读
+                // ReadbackAndUpdateMesh(PooledVertexBuffer, PooledTriangleBuffer, ...);
+            });
+        }
+    });
 }
 
 /*
@@ -334,79 +368,41 @@ void UGPUSDFCutter::ReadbackMeshData(TRDGBufferRef<FVector> VertexBuffer, TRDGBu
 }
 */
 
-// 更新DynamicMeshComponent（渲染生成的网格）
 void UGPUSDFCutter::UpdateDynamicMesh(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles)
 {
-	/*
-	if (!TargetMeshComponent || Vertices.Num() == 0 || Triangles.Num() == 0)
+	if (!TargetMeshActor || Vertices.Num() == 0 || Triangles.Num() == 0)
 		return;
 
-	// 获取DynamicMesh并清空旧数据
-	TSharedPtr<FDynamicMesh3> DynamicMesh = TargetMeshComponent->GetDynamicMesh();
-	if (!DynamicMesh)
+	UDynamicMeshComponent* DynamicMeshComp = TargetMeshActor->GetDynamicMeshComponent();
+	if (!DynamicMeshComp) return;
+
+	// 使用DynamicMeshComponent的API更新网格
+	// 这里需要根据您的DynamicMesh组件API进行调整
+	// ...
+
+	if (OnMeshGenerated.IsBound())
 	{
-		DynamicMesh = MakeShared<FDynamicMesh3>();
-		TargetMeshComponent->SetDynamicMesh(DynamicMesh);
+		OnMeshGenerated.Broadcast(DynamicMeshComp);
 	}
-	DynamicMesh->Clear();
-
-	// 添加顶点
-	for (const FVector& Vert : Vertices)
-	{
-		DynamicMesh->AddVertex(Vert);
-	}
-
-	// 添加三角形（确保索引有效）
-	for (const FIntVector& Tri : Triangles)
-	{
-		if (Tri.X >= 0 && Tri.X < Vertices.Num() &&
-			Tri.Y >= 0 && Tri.Y < Vertices.Num() &&
-			Tri.Z >= 0 && Tri.Z < Vertices.Num())
-		{
-			DynamicMesh->AddTriangle(Tri.X, Tri.Y, Tri.Z);
-		}
-	}
-
-	// 计算法线（优化渲染效果）
-	DynamicMesh->ComputeNormals();
-	DynamicMesh->ReverseOrientation(); // 确保法线方向正确
-
-	// 更新网格组件（触发渲染）
-	TargetMeshComponent->NotifyMeshUpdated();
-
-	// 触发回调
-	OnMeshGenerated.Broadcast(TargetMeshComponent);
-
-	*/
 }
 
-/*
-// 计算工具在原始物体空间的AABB（用于优化SDF更新范围，只更新工具影响的体素）
-FAxisAlignedBox UGPUSDFCutter::ComputeToolAABBInOriginalSpace(const FTransform& ToolTransform)
+void UGPUSDFCutter::CalculateToolDimensions()
 {
-	// 假设工具的本地AABB是[-ToolHalfSize, ToolHalfSize]（需与工具SDF预生成范围一致）
-	float ToolHalfSize = 50.0f; // 工具SDF预生成范围是[-50,50]，需手动匹配
-	TArray<FVector> ToolLocalCorners = {
-		FVector(-ToolHalfSize, -ToolHalfSize, -ToolHalfSize),
-		FVector(ToolHalfSize, -ToolHalfSize, -ToolHalfSize),
-		FVector(ToolHalfSize, ToolHalfSize, -ToolHalfSize),
-		FVector(-ToolHalfSize, ToolHalfSize, -ToolHalfSize),
-		FVector(-ToolHalfSize, -ToolHalfSize, ToolHalfSize),
-		FVector(ToolHalfSize, -ToolHalfSize, ToolHalfSize),
-		FVector(ToolHalfSize, ToolHalfSize, ToolHalfSize),
-		FVector(-ToolHalfSize, ToolHalfSize, ToolHalfSize)
-	};
+	// 从CutToolActor的网格组件获取边界
+	UDynamicMeshComponent* ToolMeshComponent = CutToolActor->GetDynamicMeshComponent();
 
-	// 转换到原始物体空间
-	FAxisAlignedBox ToolAABB;
-	for (const FVector& LocalCorner : ToolLocalCorners)
-	{
-		FVector WorldCorner = ToolTransform.TransformPosition(LocalCorner);
-		ToolAABB += WorldCorner;
-	}
+	ToolLocalBounds  = ToolMeshComponent->GetLocalBounds().GetBox();
+	// 计算工具尺寸
+	ToolOriginalSize = ToolLocalBounds.GetSize();
 
-	// 与原始物体边界交集（只保留重叠部分）
-	ToolAABB = ToolAABB.Intersect(OriginalBounds);
-	return ToolAABB;
 }
-*/
+
+FTransform UGPUSDFCutter::GetToolWorldTransform() const
+{
+	if (CutToolActor)
+	{
+		return CutToolActor->GetActorTransform();
+	}
+	return CurrentToolTransform;
+}
+

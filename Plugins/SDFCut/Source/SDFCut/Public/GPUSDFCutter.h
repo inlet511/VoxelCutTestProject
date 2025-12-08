@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "BoxTypes.h"
+#include "DynamicMeshActor.h"
 #include "Components/SceneComponent.h"
 #include "GPUSDFCutter.generated.h"
 
@@ -21,25 +21,36 @@ public:
 	// Sets default values for this component's properties
 	UGPUSDFCutter();
 
-	// 初始化SDF纹理（原始物体和切削工具）
-	void InitSDFTextures(UVolumeTexture* InOriginalSDF, UVolumeTexture* InToolSDF, const UE::Geometry::FAxisAlignedBox3d& InOriginalBounds, float InCubeSize = 5.0f);
-
-	// SDF纹理（CPU端引用）
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
-	UVolumeTexture* OriginalSDFTexture = nullptr;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
-	UVolumeTexture* ToolSDFTexture = nullptr;
+	// 初始化SDF纹理
+	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
+	void InitSDFTextures(
+		UVolumeTexture* InOriginalSDF,
+		UVolumeTexture* InToolSDF,
+		const FBox& TargetLocalBox,
+		float InVoxelSize = 5.0f);
 
 	// 每帧更新切削工具Transform
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
 	void UpdateToolTransform(const FTransform& InToolTransform);
 
-	/*
-	// 设置网格组件（用于渲染生成的模型）
+	// 更新物体Transform（可选，如果物体也在移动）
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
-	void SetTargetMeshComponent(UDynamicMeshComponent* InTargetMeshComponent);
-	*/
+	void UpdateObjectTransform(const FTransform& InObjectTransform);
+	
+	// SDF纹理（CPU端引用）
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
+	UVolumeTexture* OriginalSDFTexture = nullptr;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
+	UVolumeTexture* ToolSDFTexture = nullptr;
 
+	// 目标网格组件（用于渲染）
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
+	ADynamicMeshActor* TargetMeshActor = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
+	ADynamicMeshActor* CutToolActor = nullptr;
+	
 	// 网格生成完成回调
 	FOnMeshGenerated OnMeshGenerated;
 
@@ -53,53 +64,51 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
-	// 初始化GPU资源（纹理、缓冲区、Render Graph）
+	// GPU资源初始化
 	void InitGPUResources();
-
-	// 构建Render Graph，调度两个Compute Shader
-	void DispatchRenderGraph();
-
-	/*
-	// 回读GPU生成的网格数据
-	void ReadbackMeshData(TRDGUniformBufferRef VertexBuffer, TRDGUniformBufferRef TriangleBuffer, int32 NumVertices, int32 NumTriangles);
-	*/
-	
-	// 用回读的数据更新DynamicMeshComponent
+    
+	// 局部更新调度
+	void DispatchLocalUpdate();
+    
+	// 工具在切削对象空间的Local AABB
+	void CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax);
+    
+	// 数据回读和网格更新
+	void ReadbackAndUpdateMesh(FRDGBuffer* VertexBuffer, FRDGBuffer* TriangleBuffer, int32 NumVertices, int32 NumTriangles);
 	void UpdateDynamicMesh(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
 
-	// 计算工具在原始物体空间的AABB（用于优化SDF更新范围）
-	UE::Geometry::FAxisAlignedBox3d ComputeToolAABBInOriginalSpace(const FTransform& ToolTransform);
-
-
-
-	// 目标网格组件（用于渲染）
-	UPROPERTY()
-	UDynamicMeshComponent* TargetMeshComponent = nullptr;
-
-	// 原始物体的边界和体素尺寸
-	UE::Geometry::FAxisAlignedBox3d OriginalBounds;
-	float CubeSize = 5.0f;
-	FIntVector DynamicSDFDimensions = FIntVector(64, 64, 64); // 动态SDF分辨率（可调整）
-
-	// 切削工具当前Transform
+	// 当前状态
+	FTransform CurrentObjectTransform;
 	FTransform CurrentToolTransform;
-	bool bToolTransformUpdated = false; // 标记Transform是否更新
+	FTransform LastToolTransform; // 用于检测变化
+	bool bToolTransformDirty = false;
+	bool bGPUResourcesInitialized = false;
+
+	// SDF参数
+	FBox TargetLocalBounds; // 物体原始边界
+	float VoxelSize = 5.0f;
+	FIntVector SDFDimensions; // 
+
+	// 工具尺寸信息
+	FVector ToolOriginalSize; // 工具的原始尺寸（世界单位）
+	FBox ToolLocalBounds;     // 工具的本地空间边界
+	FIntVector ToolSDFDimensions; // 工具SDF纹理的尺寸
+
+	// 计算切割工具尺寸信息
+	void CalculateToolDimensions();
+	FTransform GetToolWorldTransform() const;
 
 	// GPU资源
-	TRefCountPtr<IPooledRenderTarget> DynamicSDFTexturePooled;
-
-	// 对于外部纹理，直接存储RHI引用
 	TRefCountPtr<FRHITexture> OriginalSDFRHI;
 	TRefCountPtr<FRHITexture> ToolSDFRHI;
+	TRefCountPtr<IPooledRenderTarget> DynamicSDFTexturePooled;
 
+	// 双缓冲网格数据
+	TArray<FVector> MeshVertices[2];
+	TArray<FIntVector> MeshTriangles[2];
+	int32 CurrentMeshBuffer = 0;
+	bool bHasPendingMeshData = false;
 
-	// 双缓冲：避免回读阻塞，当前帧渲染上一帧的网格
-	TArray<FVector> ReadbackVertices[2];
-	TArray<FIntVector> ReadbackTriangles[2];
-	int32 CurrentBufferIndex = 0;
-	bool bHasValidMeshData = false;
-
-	// Render Graph相关
-	bool bGPUResourcesInitialized = false;
-	FGraphEventRef LastRenderGraphEvent;
+	// 渲染图事件
+	FGraphEventRef RenderGraphCompletionEvent;
 };
