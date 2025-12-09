@@ -48,7 +48,8 @@ void UGPUSDFCutter::BeginPlay()
 // Called every frame
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	/*
+	
+	UpdateToolTransform(CutToolActor->GetActorTransform());
 	
 	if (!bGPUResourcesInitialized || !TargetMeshActor)
 		return;
@@ -56,6 +57,7 @@ void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorCo
 	// 只有工具位置变化时才更新
 	if (bToolTransformDirty)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("Transform Updated, Dispatching Work"));
 		DispatchLocalUpdate([this](const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles) {
 			this->ReadbackMeshData(Vertices, Triangles);
 		});
@@ -69,7 +71,7 @@ void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorCo
 		UpdateDynamicMesh(MeshVertices[ReadBufferIndex], MeshTriangles[ReadBufferIndex]);
 		bHasPendingMeshData = false;
 	}
-	*/
+	
 }
 
 
@@ -93,7 +95,6 @@ void UGPUSDFCutter::InitSDFTextures(
 
 	CalculateToolDimensions();
 	CurrentToolTransform = GetToolWorldTransform();
-	LastToolTransform = CurrentToolTransform;
 
 	// 初始化GPU资源
 	InitGPUResources();
@@ -101,9 +102,11 @@ void UGPUSDFCutter::InitSDFTextures(
 
 void UGPUSDFCutter::UpdateToolTransform(const FTransform& InToolTransform)
 {
-	LastToolTransform = CurrentToolTransform;
-	CurrentToolTransform = InToolTransform;
-	bToolTransformDirty = true;
+	if (!CurrentToolTransform.Equals(InToolTransform))
+	{
+		CurrentToolTransform = InToolTransform;
+		bToolTransformDirty = true;
+	}	
 }
 
 void UGPUSDFCutter::UpdateObjectTransform(const FTransform& InObjectTransform)
@@ -120,29 +123,36 @@ void UGPUSDFCutter::InitGPUResources()
 	// 1. 存储外部纹理的RHI引用
 	OriginalSDFRHIRef = OriginalSDFTexture->GetResource()->TextureRHI;
 	ToolSDFRHIRef = ToolSDFTexture->GetResource()->TextureRHI;
+
+	SDFDimensions = FIntVector(
+		OriginalSDFTexture->GetSizeX(),
+		OriginalSDFTexture->GetSizeY(),
+		OriginalSDFTexture->GetSizeZ()
+	);
 	
-    ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this,OutSideTextureRHI = OriginalSDFRHIRef](FRHICommandListImmediate& RHICmdList)
+    ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this,OriginalTextureRHI = OriginalSDFRHIRef](FRHICommandListImmediate& RHICmdList)
     {
  
      	FRDGBuilder GraphBuilder(RHICmdList); 
 
      	FRDGTextureDesc DynamicSDFDesc = FRDGTextureDesc::Create3D(
-     		SDFDimensions,
+			SDFDimensions,
      		PF_R32_FLOAT,
      		FClearValueBinding::None,
      		TexCreate_UAV | TexCreate_RenderTargetable // 只保留必要的标志
 		);
-		FRDGTextureRef DynamicSDFTextureRef = GraphBuilder.CreateTexture(DynamicSDFDesc, TEXT("DynamicSDF"));
+		FRDGTextureRef OutTexture = GraphBuilder.CreateTexture(DynamicSDFDesc, TEXT("DynamicSDF"));
+		DynamicSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(OutTexture);
 
-    	// 注册外部资源    	
-    	FRDGTextureRef RDGOriginalSDFTexture  = RegisterExternalTexture(GraphBuilder, OutSideTextureRHI, TEXT("VolumeTexture"));
+    	// 注册外部资源
+    	FRDGTextureRef RDGOriginalSDFTexture  = RegisterExternalTexture(GraphBuilder, OriginalTextureRHI, TEXT("VolumeTexture"));
 
     	FRHICopyTextureInfo CopyInfo;
+		CopyInfo.SourceMipIndex = 0;
+		CopyInfo.DestMipIndex = 0;
     	// 5. 初始化动态SDF为原始SDF值
-    	AddCopyTexturePass(GraphBuilder, RDGOriginalSDFTexture , DynamicSDFTextureRef, CopyInfo); 
+    	AddCopyTexturePass(GraphBuilder, RDGOriginalSDFTexture , OutTexture, CopyInfo); 
     	
-		DynamicSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(DynamicSDFTextureRef);
-
 		GraphBuilder.Execute();	
 
 		bGPUResourcesInitialized = true;
@@ -274,7 +284,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
         }
 
         // ========== 2. 全量Marching Cubes（遍历整个SDF） ==========
-        {
+		{
             // 全量生成：覆盖整个SDF体素范围（不再依赖工具影响区）
             FIntVector GenerateMin(0, 0, 0);
             FIntVector GenerateMax = SDFDimensions - FIntVector(2, 2, 2); // 避免体素越界
@@ -297,7 +307,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
             // 清空计数器
             AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(VertexCounter, PF_R32_SINT), 0);
             AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(TriangleCounter, PF_R32_SINT), 0);
-
+			
             // MC参数：生成区域设为全量
             auto* MCUBParams = GraphBuilder.AllocParameters<FMCUB>();
             MCUBParams->SDFBoundsMin = FVector3f(TargetLocalBounds.Min);
@@ -311,11 +321,11 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
             auto* PassParams = GraphBuilder.AllocParameters<FLocalMarchingCubesCS::FParameters>();
             PassParams->Params = GraphBuilder.CreateUniformBuffer(MCUBParams);
             PassParams->DynamicSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(UpdatedSDFTexture));
-            PassParams->OutVertices = GraphBuilder.CreateUAV(VertexBuffer);
-            PassParams->OutTriangles = GraphBuilder.CreateUAV(TriangleBuffer);
-            PassParams->VertexCounter = GraphBuilder.CreateUAV(VertexCounter);
-            PassParams->TriangleCounter = GraphBuilder.CreateUAV(TriangleCounter);
-
+            PassParams->OutVertices = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(VertexBuffer, PF_R32G32B32F));
+            PassParams->OutTriangles = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(TriangleBuffer, PF_R8G8B8A8_UINT));
+            PassParams->VertexCounter = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(VertexCounter, PF_R32_SINT));
+            PassParams->TriangleCounter = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(TriangleCounter, PF_R32_SINT));
+			
             // 全量MC的线程调度（按整个SDF范围计算）
             FIntVector MCRegionSize = GenerateMax - GenerateMin + FIntVector(1);
             FIntVector MCGroupCount = FComputeShaderUtils::GetGroupCount(MCRegionSize, FIntVector(4, 4, 4));
@@ -332,6 +342,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
         	// 将更新后的SDF复制回持久化纹理
         	AddCopyTexturePass(GraphBuilder, UpdatedSDFTexture, DynamicSDFTexture);
 
+			
         	FRHIGPUBufferReadback* VertexReadback = new FRHIGPUBufferReadback(TEXT("VerticesReadback"));
         	FRHIGPUBufferReadback* TriangleReadback = new FRHIGPUBufferReadback(TEXT("TrianglesReadback"));
         	FRHIGPUBufferReadback* VertexCounterReadback = new FRHIGPUBufferReadback(TEXT("VertexCounterReadback"));
@@ -419,6 +430,8 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
         	AsyncTask(ENamedThreads::ActualRenderingThread, [RunnerFunc]() {
 				RunnerFunc(RunnerFunc);
 				});
+
+			
         }
 
     	GraphBuilder.Execute();

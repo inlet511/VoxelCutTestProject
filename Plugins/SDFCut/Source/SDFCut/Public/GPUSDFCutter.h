@@ -80,7 +80,6 @@ private:
 	// 当前状态
 	FTransform CurrentObjectTransform;
 	FTransform CurrentToolTransform;
-	FTransform LastToolTransform; // 用于检测变化
 	bool bToolTransformDirty = false;
 	bool bGPUResourcesInitialized = false;
 
