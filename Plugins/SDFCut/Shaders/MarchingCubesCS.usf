@@ -1,7 +1,6 @@
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
-#include "SharedData.ush"
 
 // Marching Cubes标准边表和三角表
 static const int EdgeIndices[12][2] = {
@@ -315,25 +314,25 @@ RWBuffer<int> TriangleCounter;
 
 
 // 采样动态SDF
-float SampleDynamicSDF(Texture3D<float> DynamicSDF, float3 WorldPos, FAxisAlignedBox3f Bounds, int3 Dimensions)
+float SampleDynamicSDF(Texture3D<float> DynamicSDF, float3 WorldPos, float3 BoundsMin, float3 BoundsMax, int3 Dimensions)
 {
-    float3 UV = (WorldPos - Bounds.Min) / (Bounds.Max - Bounds.Min);
+    float3 UV = (WorldPos - BoundsMin) / (BoundsMax - BoundsMin);
     int3 VoxelIndex = int3(saturate(UV) * Dimensions);
     return DynamicSDF[VoxelIndex];
 }
 
 // 计算体素8个角点的SDF值
-void SampleCubeSDF(Texture3D<float> DynamicSDF, float3 CubePos, float CubeSize, FAxisAlignedBox3f Bounds, int3 Dimensions, out float Values[8])
+void SampleCubeSDF(Texture3D<float> DynamicSDF, float3 CubePos, float CubeSize,  float3 BoundsMin, float3 BoundsMax, int3 Dimensions, out float Values[8])
 {
     float3 HalfSize = float3(CubeSize * 0.5f, CubeSize * 0.5f, CubeSize * 0.5f);
-    Values[0] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, -HalfSize.y, -HalfSize.z), Bounds, Dimensions);
-    Values[1] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, -HalfSize.y, -HalfSize.z), Bounds, Dimensions);
-    Values[2] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, HalfSize.y, -HalfSize.z), Bounds, Dimensions);
-    Values[3] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, HalfSize.y, -HalfSize.z), Bounds, Dimensions);
-    Values[4] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, -HalfSize.y, HalfSize.z), Bounds, Dimensions);
-    Values[5] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, -HalfSize.y, HalfSize.z), Bounds, Dimensions);
-    Values[6] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, HalfSize.y, HalfSize.z), Bounds, Dimensions);
-    Values[7] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, HalfSize.y, HalfSize.z), Bounds, Dimensions);
+    Values[0] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, -HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    Values[1] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, -HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    Values[2] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    Values[3] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, HalfSize.y, -HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    Values[4] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, -HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    Values[5] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, -HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    Values[6] = SampleDynamicSDF(DynamicSDF, CubePos + float3(HalfSize.x, HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
+    Values[7] = SampleDynamicSDF(DynamicSDF, CubePos + float3(-HalfSize.x, HalfSize.y, HalfSize.z), BoundsMin, BoundsMax, Dimensions);
 }
 
 // 计算边的交点
@@ -363,10 +362,7 @@ void MarchingCubesKernel(uint3 DispatchThreadId : SV_DispatchThreadID)
 
     // 2. 采样立方体8个角点的SDF值
     float SDFValues[8];
-    FAxisAlignedBox3f Bounds;
-	Bounds.Min = MCUB.SDFBoundsMin;
-	Bounds.Max = MCUB.SDFBoundsMax;
-    SampleCubeSDF(DynamicSDF, CubePos, MCUB.CubeSize, Bounds, MCUB.SDFDimensions, SDFValues);
+    SampleCubeSDF(DynamicSDF, CubePos, MCUB.CubeSize, MCUB.SDFBoundsMin, MCUB.SDFBoundsMax, MCUB.SDFDimensions, SDFValues);
 
     // 3. 计算立方体编码（判断每个角点是否在等值面内）
     int CubeCode = 0;
@@ -403,8 +399,10 @@ void MarchingCubesKernel(uint3 DispatchThreadId : SV_DispatchThreadID)
             EdgeVertices[i] = ComputeEdgeIntersection(P0, SDFValues[A], P1, SDFValues[B], MCUB.IsoValue);
             
             // 原子操作分配顶点索引（避免并发冲突）
-            EdgeVertexIndices[i] = InterlockedAdd(VertexCounter[0], 1);
-            OutVertices[EdgeVertexIndices[i]] = EdgeVertices[i];
+        	int originalVetexCount;
+            InterlockedAdd(VertexCounter[0], 1 , originalVetexCount);
+        	int VertexIndex = originalVetexCount;
+            OutVertices[VertexIndex] = EdgeVertices[i];
         }
     }
 

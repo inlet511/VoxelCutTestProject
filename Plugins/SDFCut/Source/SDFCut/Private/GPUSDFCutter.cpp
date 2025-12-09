@@ -12,7 +12,7 @@
 #include "MarchingCubesShader.h"
 #include "DynamicMesh/MeshNormals.h"
 
-IMPLEMENT_UNIFORM_BUFFER_STRUCT(CutUB,"CutUB");
+IMPLEMENT_UNIFORM_BUFFER_STRUCT(FCutUB,"CutUB");
 IMPLEMENT_GLOBAL_SHADER(FUpdateSDFCS, "/SDF/Shaders/DynamicSDFUpdateCS.usf", "LocalSDFUpdateKernel", SF_Compute);
 
 IMPLEMENT_UNIFORM_BUFFER_STRUCT(FMCUB,"MCUB");
@@ -60,7 +60,7 @@ void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorCo
 		});
 		bToolTransformDirty = false;
 	}
-
+	
 	// 更新网格（使用双缓冲的上一帧数据）
 	if (bHasPendingMeshData)
 	{
@@ -233,7 +233,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 
         // 1. 局部SDF更新
         {
-        	auto* CutUBParams = GraphBuilder.AllocParameters<CutUB>();        	
+        	auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();        	
         	CutUBParams->ObjectLocalBoundsMin = FVector3f(TargetLocalBounds.Min);
 			CutUBParams->ObjectLocalBoundsMax = FVector3f(TargetLocalBounds.Max);
 			CutUBParams->ToolLocalBoundsMin = FVector3f(ToolLocalBounds.Min);

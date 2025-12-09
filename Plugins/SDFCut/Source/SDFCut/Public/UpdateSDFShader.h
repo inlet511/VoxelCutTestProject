@@ -4,9 +4,8 @@
 #include "ShaderParameterStruct.h"
 #include "RenderGraphResources.h"
 
-
 // 局部更新参数
-BEGIN_UNIFORM_BUFFER_STRUCT(CutUB, )
+BEGIN_UNIFORM_BUFFER_STRUCT(FCutUB, )
 	// 物体和工具的本地边界
 	SHADER_PARAMETER(FVector3f, ObjectLocalBoundsMin)
 	SHADER_PARAMETER(FVector3f, ObjectLocalBoundsMax)
@@ -35,7 +34,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FUpdateSDFCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(CutUB, Params)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FCutUB, Params)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, OriginalSDF)
 		SHADER_PARAMETER_SAMPLER(SamplerState, OriginalSDFSampler)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, ToolSDF)

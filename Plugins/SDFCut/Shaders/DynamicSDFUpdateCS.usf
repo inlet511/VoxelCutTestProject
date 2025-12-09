@@ -1,18 +1,6 @@
 
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
-#include "SharedData.ush"
-
-
-struct FCutterGlobalParams
-{
-    float IsoValue;
-    float CubeSize;
-    float4x4 ToolTransform;
-    float4x4 ToolInverseTransform;
-    FAxisAlignedBox3f ToolAABB;
-};
-
 
 Texture3D<float> OriginalSDF;
 SamplerState OriginalSDFSampler;
@@ -22,17 +10,34 @@ RWTexture3D<float> DynamicSDF;
 
 
 // 采样SDF纹理（将世界坐标转换为纹理UV）
-float SampleSDF(Texture3D<float> SDFTex, SamplerState Sampler, float3 WorldPos, FAxisAlignedBox SDFBounds)
+float SampleSDF(Texture3D<float> SDFTex, SamplerState Sampler, float3 Pos, float3 SDFBoundsMin, float3 SDFBoundsMax)
 {
-    float3 UV = saturate((WorldPos - SDFBounds.Min) / (SDFBounds.Max - SDFBounds.Min));
+    float3 UV = saturate((Pos - SDFBoundsMin) / (SDFBoundsMax - SDFBoundsMin));
     return SDFTex.SampleLevel(Sampler, UV, 0).r;
 }
 
-// 计算体素在世界空间的位置
-float3 GetVoxelWorldPos(FIntVector VoxelIndex, FAxisAlignedBox Bounds, FIntVector Dimensions)
+// 通过DispatchedThreadID获取它在SDF局部坐标系的坐标
+float3 VoxelToObjectPos(int3 GlobalVoxelID, int3 SDFDimensions, float3 ObjectLocalBoundsMin, float3 ObjectLocalBoundsMax)
 {
-    float3 Step = (Bounds.Max - Bounds.Min) / Dimensions;
-    return Bounds.Min + (VoxelIndex + 0.5f) * Step; // 体素中心点
+    float3 Step = (ObjectLocalBoundsMax - ObjectLocalBoundsMin) / (float3)SDFDimensions;
+    return ObjectLocalBoundsMin + (GlobalVoxelID + 0.5f) * Step;
+}
+
+// 检查一个点是否在一个范围内
+bool IsInToolLocalBounds(float3 Pos, float3 BoundsMin, float3 BoundsMax)
+{
+    return
+        Pos.x >= BoundsMin.x
+        && Pos.y >= BoundsMin.y
+        && Pos.z >= BoundsMin.z
+        && Pos.x <= BoundsMax.x
+        && Pos.y <= BoundsMax.y
+        && Pos.z <= BoundsMax.z;
+}
+
+float3 GetToolUV(float3 PosInToolSpace, float3 ToolLocalBoundsMin, float3 ToolLocalBoundsMax)
+{
+    return (PosInToolSpace - ToolLocalBoundsMin)/(ToolLocalBoundsMax - ToolLocalBoundsMin);
 }
 
 [numthreads(4, 4, 4)]
@@ -44,24 +49,23 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     // 边界检查
     if (any(GlobalVoxelID >= CutUB.UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
         return;
-
-    // 1. 计算物体局部坐标（直接操作，不需要世界坐标转换）
-    float3 ObjectPos = VoxelToObjectPos(GlobalVoxelID, CutUB.SDFDimensions, CutUB.ObjectLocalBounds);
+    
+    // 1. 计算物体局部坐标
+    float3 ObjectPosInLocalSpace = VoxelToObjectPos(GlobalVoxelID, CutUB.SDFDimensions,CutUB.ObjectLocalBoundsMin, CutUB.ObjectLocalBoundsMax);
     
     // 2. 采样原始物体SDF（直接在物体局部坐标系）
-    float3 ObjectUV = ObjectPosToUV(ObjectPos, CutUB.ObjectLocalBounds);
-    float OriginalSDFValue = OriginalSDF.SampleLevel(OriginalSDFSampler, ObjectUV, 0);
+    float OriginalSDFValue = SampleSDF(OriginalSDF, OriginalSDFSampler,ObjectPosInLocalSpace, CutUB.ObjectLocalBoundsMin, CutUB.ObjectLocalBoundsMax);
     
     // 3. 将物体局部坐标转换到工具局部坐标系
-    float4 ToolSpacePos4 = mul(CutUB.ObjectToToolTransform, float4(ObjectPos, 1.0));
+    float4 ToolSpacePos4 = mul(CutUB.ObjectToToolTransform, float4(ObjectPosInLocalSpace, 1.0));
     float3 ToolSpacePos = ToolSpacePos4.xyz / ToolSpacePos4.w;
     
     // 4. 检查是否在工具边界内（快速剔除）
-    if (!IsInToolLocalBounds(ToolSpacePos, CutUB.ToolLocalBounds))
+    if (!IsInToolLocalBounds(ToolSpacePos, CutUB.ToolLocalBoundsMin, CutUB.ToolLocalBoundsMax))
         return;
     
     // 5. 采样工具SDF（工具局部坐标系）
-    float3 ToolUV = ToolPosToUV(ToolSpacePos, CutUB.ToolLocalBounds);
+    float3 ToolUV = GetToolUV(ToolSpacePos, CutUB.ToolLocalBoundsMin, CutUB.ToolLocalBoundsMax);
     float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);
     
     // 6. 布尔运算：切削 = 保留物体内部(负值)且不在工具内部(正值)的部分
