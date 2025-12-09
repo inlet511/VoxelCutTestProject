@@ -99,9 +99,10 @@ private:
 	FTransform GetToolWorldTransform() const;
 
 	// GPU资源
-	TRefCountPtr<FRHITexture> OriginalSDFRHI;
-	TRefCountPtr<FRHITexture> ToolSDFRHI;
 	TRefCountPtr<IPooledRenderTarget> DynamicSDFTexturePooled;
+
+	FTextureRHIRef OriginalSDFRHIRef;
+	FTextureRHIRef ToolSDFRHIRef;
 
 	// 双缓冲网格数据
 	TArray<FVector> MeshVertices[2];

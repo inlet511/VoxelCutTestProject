@@ -42,13 +42,14 @@ void UGPUSDFCutter::BeginPlay()
 			TargetMeshActor->GetDynamicMeshComponent()->GetLocalBounds().GetBox(),
 			VoxelSize);
 	}
-
 }
 
 
 // Called every frame
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	/*
+	
 	if (!bGPUResourcesInitialized || !TargetMeshActor)
 		return;
 
@@ -68,6 +69,7 @@ void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorCo
 		UpdateDynamicMesh(MeshVertices[ReadBufferIndex], MeshTriangles[ReadBufferIndex]);
 		bHasPendingMeshData = false;
 	}
+	*/
 }
 
 
@@ -114,46 +116,39 @@ void UGPUSDFCutter::InitGPUResources()
  {
     if (bGPUResourcesInitialized)
      	return;
- 
-    ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this](FRHICommandListImmediate& RHICmdList)
+
+	// 1. 存储外部纹理的RHI引用
+	OriginalSDFRHIRef = OriginalSDFTexture->GetResource()->TextureRHI;
+	ToolSDFRHIRef = ToolSDFTexture->GetResource()->TextureRHI;
+	
+    ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this,OutSideTextureRHI = OriginalSDFRHIRef](FRHICommandListImmediate& RHICmdList)
     {
-    	
-     	int32 SourceSizeX = OriginalSDFTexture->GetSizeX();
-     	int32 SourceSizeY = OriginalSDFTexture->GetSizeY();
-     	int32 SourceSizeZ = OriginalSDFTexture->GetSizeZ();
  
-     	// 1. 存储外部纹理的RHI引用（不要ConvertToExternalTexture）
-     	OriginalSDFRHI = OriginalSDFTexture->GetResource()->GetTexture3DRHI();
-     	ToolSDFRHI = ToolSDFTexture->GetResource()->GetTextureRHI();
- 
-     	FRDGBuilder GraphBuilder(RHICmdList);
- 
-     	// 2. 注册外部纹理到Render Graph
-     	FRDGTextureRef OriginalTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(OriginalSDFRHI,TEXT("OrigianlTexture")));
-     	FRDGTextureRef ToolTextureRef = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(ToolSDFRHI,TEXT("ToolSDFTexture")));
- 
-     	// 3. 【关键修改】创建动态SDF纹理 - 移除不允许的标志
-     	// 移除了 TexCreate_RenderTargetable 和 TexCreate_DepthStencilTargetable 等标志
-     	// 仅保留UAV（用于写入）和ShaderResource（用于读取）标志
+     	FRDGBuilder GraphBuilder(RHICmdList); 
+
      	FRDGTextureDesc DynamicSDFDesc = FRDGTextureDesc::Create3D(
      		SDFDimensions,
      		PF_R32_FLOAT,
      		FClearValueBinding::None,
-     		TexCreate_UAV | TexCreate_ShaderResource // 只保留必要的标志
-
-	);
+     		TexCreate_UAV | TexCreate_RenderTargetable // 只保留必要的标志
+		);
 		FRDGTextureRef DynamicSDFTextureRef = GraphBuilder.CreateTexture(DynamicSDFDesc, TEXT("DynamicSDF"));
 
+    	// 注册外部资源    	
+    	FRDGTextureRef RDGOriginalSDFTexture  = RegisterExternalTexture(GraphBuilder, OutSideTextureRHI, TEXT("VolumeTexture"));
+
+    	FRHICopyTextureInfo CopyInfo;
     	// 5. 初始化动态SDF为原始SDF值
-    	AddCopyTexturePass(GraphBuilder, OriginalTextureRef, DynamicSDFTextureRef);
+    	AddCopyTexturePass(GraphBuilder, RDGOriginalSDFTexture , DynamicSDFTextureRef, CopyInfo); 
     	
 		DynamicSDFTexturePooled = GraphBuilder.ConvertToExternalTexture(DynamicSDFTextureRef);
-		GraphBuilder.Execute();
-	
+
+		GraphBuilder.Execute();	
 
 		bGPUResourcesInitialized = true;
-    	UE_LOG(LogTemp, Log, TEXT("GPU SDF Cutter Local-Update Mode Initialized"));
-	});	
+
+	});
+	
 }
 
 void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax)
@@ -224,15 +219,25 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
             return;
 
         // 注册纹理
-        FRDGTextureRef OriginalTexture = GraphBuilder.RegisterExternalTexture(
-            CreateRenderTarget(OriginalSDFRHI, TEXT("OriginalSDFTexture")));
-        FRDGTextureRef ToolTexture = GraphBuilder.RegisterExternalTexture(
-            CreateRenderTarget(ToolSDFRHI, TEXT("ToolSDFTexture")));
+        FRDGTextureRef OriginalTexture = RegisterExternalTexture(GraphBuilder, OriginalSDFRHIRef,TEXT("OriginalSDFTexture"));
+        FRDGTextureRef ToolTexture = RegisterExternalTexture(GraphBuilder, ToolSDFRHIRef, TEXT("ToolSDFTexture"));
         FRDGTextureRef DynamicSDFTexture = GraphBuilder.RegisterExternalTexture(
         	DynamicSDFTexturePooled, TEXT("DynamicSDFTexture"));
 
+    	FRDGTextureRef UpdatedSDFTexture = nullptr;
+    	
         // 1. 局部SDF更新
         {
+        	// 创建临时纹理用于更新结果
+			FRDGTextureDesc TempSDFDesc = FRDGTextureDesc::Create3D(
+				SDFDimensions, PF_R32_FLOAT, FClearValueBinding::None, 
+				TexCreate_ShaderResource | TexCreate_UAV);
+                
+			UpdatedSDFTexture = GraphBuilder.CreateTexture(TempSDFDesc, TEXT("TempSDF"));
+            
+			// 首先复制当前动态SDF到临时纹理
+			AddCopyTexturePass(GraphBuilder, DynamicSDFTexture, UpdatedSDFTexture);
+        	
         	auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();        	
         	CutUBParams->ObjectLocalBoundsMin = FVector3f(TargetLocalBounds.Min);
 			CutUBParams->ObjectLocalBoundsMax = FVector3f(TargetLocalBounds.Max);
@@ -250,7 +255,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
             PassParams->Params = GraphBuilder.CreateUniformBuffer(CutUBParams);
             PassParams->OriginalSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(OriginalTexture));
             PassParams->ToolSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ToolTexture));
-            PassParams->DynamicSDF = GraphBuilder.CreateUAV(DynamicSDFTexture);
+            PassParams->DynamicSDF = GraphBuilder.CreateUAV(UpdatedSDFTexture);
             PassParams->OriginalSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
             PassParams->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
@@ -305,7 +310,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 
             auto* PassParams = GraphBuilder.AllocParameters<FLocalMarchingCubesCS::FParameters>();
             PassParams->Params = GraphBuilder.CreateUniformBuffer(MCUBParams);
-            PassParams->DynamicSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(DynamicSDFTexture));
+            PassParams->DynamicSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(UpdatedSDFTexture));
             PassParams->OutVertices = GraphBuilder.CreateUAV(VertexBuffer);
             PassParams->OutTriangles = GraphBuilder.CreateUAV(TriangleBuffer);
             PassParams->VertexCounter = GraphBuilder.CreateUAV(VertexCounter);
@@ -323,6 +328,9 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
                 PassParams,
                 MCGroupCount
             );
+
+        	// 将更新后的SDF复制回持久化纹理
+        	AddCopyTexturePass(GraphBuilder, UpdatedSDFTexture, DynamicSDFTexture);
 
         	FRHIGPUBufferReadback* VertexReadback = new FRHIGPUBufferReadback(TEXT("VerticesReadback"));
         	FRHIGPUBufferReadback* TriangleReadback = new FRHIGPUBufferReadback(TEXT("TrianglesReadback"));
