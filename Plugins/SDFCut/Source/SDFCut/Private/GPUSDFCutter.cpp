@@ -233,8 +233,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 			// 注册纹理
 			FRDGTextureRef OriginalTexture = RegisterExternalTexture(GraphBuilder, OriginalSDFRHIRef, TEXT("OriginalSDFTexture"));
 			FRDGTextureRef ToolTexture = RegisterExternalTexture(GraphBuilder, ToolSDFRHIRef, TEXT("ToolSDFTexture"));
-			FRDGTextureRef DynamicSDFTexture = GraphBuilder.RegisterExternalTexture(
-				DynamicSDFTexturePooled, TEXT("DynamicSDFTexture"));
+			FRDGTextureRef DynamicSDFTexture = GraphBuilder.RegisterExternalTexture(DynamicSDFTexturePooled, TEXT("DynamicSDFTexture"));
 
 			FRDGTextureRef UpdatedSDFTexture = nullptr;
 
@@ -249,41 +248,40 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 
 				// 首先复制当前动态SDF到临时纹理
 				AddCopyTexturePass(GraphBuilder, DynamicSDFTexture, UpdatedSDFTexture);
+				
+				auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();
+				CutUBParams->ObjectLocalBoundsMin = FVector3f(TargetLocalBounds.Min);
+				CutUBParams->ObjectLocalBoundsMax = FVector3f(TargetLocalBounds.Max);
+				CutUBParams->ToolLocalBoundsMin = FVector3f(ToolLocalBounds.Min);
+				CutUBParams->ToolLocalBoundsMax = FVector3f(ToolLocalBounds.Max);
+				CutUBParams->ObjectToToolTransform = FMatrix44f(CurrentObjectTransform.ToMatrixWithScale());
+				CutUBParams->ToolToObjectTransform = FMatrix44f(CurrentObjectTransform.Inverse().ToMatrixWithScale());
+				CutUBParams->SDFDimensions = SDFDimensions;
+				CutUBParams->VoxelSize = VoxelSize;
+				CutUBParams->IsoValue = 0.0f;
+				CutUBParams->UpdateRegionMin = UpdateMin;
+				CutUBParams->UpdateRegionMax = UpdateMax;
 
-				/*
-							auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();
-							CutUBParams->ObjectLocalBoundsMin = FVector3f(TargetLocalBounds.Min);
-							CutUBParams->ObjectLocalBoundsMax = FVector3f(TargetLocalBounds.Max);
-							CutUBParams->ToolLocalBoundsMin = FVector3f(ToolLocalBounds.Min);
-							CutUBParams->ToolLocalBoundsMax = FVector3f(ToolLocalBounds.Max);
-							CutUBParams->ObjectToToolTransform = FMatrix44f(CurrentObjectTransform.ToMatrixWithScale());
-							CutUBParams->ToolToObjectTransform = FMatrix44f(CurrentObjectTransform.Inverse().ToMatrixWithScale());
-							CutUBParams->SDFDimensions = SDFDimensions;
-							CutUBParams->VoxelSize = VoxelSize;
-							CutUBParams->IsoValue = 0.0f;
-							CutUBParams->UpdateRegionMin = UpdateMin;
-							CutUBParams->UpdateRegionMax = UpdateMax;
+				auto* PassParams = GraphBuilder.AllocParameters<FUpdateSDFCS::FParameters>();
+				PassParams->Params = GraphBuilder.CreateUniformBuffer(CutUBParams);
+				PassParams->OriginalSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(OriginalTexture));
+				PassParams->ToolSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ToolTexture));
+				PassParams->DynamicSDF = GraphBuilder.CreateUAV(UpdatedSDFTexture);
+				PassParams->OriginalSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+				PassParams->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
-							auto* PassParams = GraphBuilder.AllocParameters<FUpdateSDFCS::FParameters>();
-							PassParams->Params = GraphBuilder.CreateUniformBuffer(CutUBParams);
-							PassParams->OriginalSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(OriginalTexture));
-							PassParams->ToolSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ToolTexture));
-							PassParams->DynamicSDF = GraphBuilder.CreateUAV(UpdatedSDFTexture);
-							PassParams->OriginalSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-							PassParams->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+				// 只调度更新区域
+				FIntVector RegionSize = UpdateMax - UpdateMin + FIntVector(1);
+				FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(RegionSize, FIntVector(4, 4, 4));
 
-							// 只调度更新区域
-							FIntVector RegionSize = UpdateMax - UpdateMin + FIntVector(1);
-							FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(RegionSize, FIntVector(4, 4, 4));
-
-							TShaderMapRef<FUpdateSDFCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-							FComputeShaderUtils::AddPass(
-								GraphBuilder,
-								RDG_EVENT_NAME("LocalSDFUpdate"),
-								ComputeShader,
-								PassParams,
-								GroupCount
-							);*/
+				TShaderMapRef<FUpdateSDFCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+				FComputeShaderUtils::AddPass(
+					GraphBuilder,
+					RDG_EVENT_NAME("LocalSDFUpdate"),
+					ComputeShader,
+					PassParams,
+					GroupCount
+				);
 			}
 
 			// ========== 2. 全量Marching Cubes（遍历整个SDF） ==========
@@ -323,6 +321,7 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 
 				auto* PassParams = GraphBuilder.AllocParameters<FLocalMarchingCubesCS::FParameters>();
 				PassParams->Params = GraphBuilder.CreateUniformBuffer(MCUBParams);
+				
 				PassParams->DynamicSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(UpdatedSDFTexture));
 				PassParams->OutVertices = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(VertexBuffer, PF_R32G32B32F));
 				PassParams->OutTriangles = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(TriangleBuffer, PF_R8G8B8A8_UINT));
