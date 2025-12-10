@@ -80,3 +80,4 @@ DerivedDataCache/*
 .vs/*
 
 Documents/Meshes/*
+*.user

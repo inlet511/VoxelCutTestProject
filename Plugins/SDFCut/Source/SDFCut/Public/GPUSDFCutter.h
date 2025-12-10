@@ -36,11 +36,11 @@ public:
 	// 更新物体Transform（可选，如果物体也在移动）
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
 	void UpdateObjectTransform(const FTransform& InObjectTransform);
-	
+
 	// SDF纹理（CPU端引用）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
 	UVolumeTexture* OriginalSDFTexture = nullptr;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
 	UVolumeTexture* ToolSDFTexture = nullptr;
 
@@ -50,7 +50,7 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
 	ADynamicMeshActor* CutToolActor = nullptr;
-	
+
 	// 网格生成完成回调
 	FOnMeshGenerated OnMeshGenerated;
 
@@ -66,13 +66,13 @@ public:
 private:
 	// GPU资源初始化
 	void InitGPUResources();
-    
+
 	// 局部更新调度
 	void DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles)> AsyncCallback);
-    
+
 	// 工具在切削对象空间的Local AABB
 	void CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax);
-    
+
 	// 数据回读和网格更新
 	void ReadbackMeshData(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
 	void UpdateDynamicMesh(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
@@ -108,5 +108,6 @@ private:
 	TArray<FIntVector> MeshTriangles[2];
 	int32 CurrentMeshBuffer = 0;
 	bool bHasPendingMeshData = false;
+
 
 };
