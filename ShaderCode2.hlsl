@@ -102,9 +102,36 @@ if (HitSurface) {
 
     SurfaceNormal = normalize(float3(gradX, gradY, gradZ));
 
-    // 简单的漫反射光照计算
-    float Diffuse = max(0.2, dot(SurfaceNormal, normalize(LightDir.xyz))); // 包含环境光
-    SurfaceColor = BaseColor.xyz * Diffuse;               // 材质基础颜色 * 光照
+    // --- 3. 高级光照计算 (Advanced Lighting) ---
+
+    // A. 准备向量
+    float3 L = normalize(LightDir.xyz);           // 光源方向
+    float3 V = normalize(-WorldSpaceRayDir);      // 视线方向 (从表面指向相机)
+    float3 N = SurfaceNormal;                     // 法线
+    float3 H = normalize(L + V);                  // 半角向量 (Blinn-Phong 核心)
+
+    // B. 漫反射 (Diffuse)
+    float NdotL = max(0.0, dot(N, L));
+    float3 Diffuse = BaseColor.xyz * NdotL;
+
+    // C. 高光 (Specular) - Blinn-Phong
+    // 建议将这些硬编码数值改为 Custom Node 的输入引脚
+    float SpecPower = 32.0;       // 高光范围：值越大，光斑越小越锐利
+    float NdotH = max(0.0, dot(N, H));
+    float SpecTerm = pow(NdotH, SpecPower) * SpecularIntensity;
+    float3 Specular = SpecularColor.xyz * SpecTerm;
+
+    // D. 边缘光 (Rim Light) -
+    // 原理：当法线 N 和视线 V 接近垂直时 (dot接近0)，边缘发光
+    float RimExp = 3.0;           // 边缘衰减：值越大，边缘光越细
+    float RimBoost = 1.5;         // 边缘光强度
+    float NdotV = max(0.0, dot(N, V));
+    float RimTerm = pow(1.0 - NdotV, RimExp) * RimBoost;
+    // 边缘光颜色通常比 BaseColor 更亮，或者稍微偏冷色调
+    float3 RimColorFinal = RimColor.xyz * RimTerm; 
+
+    // --- 4. 最终合成 ---
+    SurfaceColor = AmbientColor.xyz + Diffuse + Specular + RimColorFinal;
 
     return float4(SurfaceColor, 1.0);
 }
