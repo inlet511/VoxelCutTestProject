@@ -20,71 +20,94 @@ float3 ViewSpaceRayDir = mul(float4(WorldSpaceRayDir, 0.0), PrimaryView.Translat
 // ViewSpace步进量
 float DepthStep = ViewSpaceRayDir.z * StepSize;
 
-
 // Step2. 计算现有场景深度线性深度(ViewSpace)
 float2 ScreenUV = MaterialFloat2(ScreenAlignedPosition(Parameters.ScreenPosition).xy);
 // 线性场景深度
 float SceneDepthLinear = CalcSceneDepth(ScreenUV);
 
-
 // 初始化循环变量
-float CurrentDepth = ViewStartPos.z; // 当前点的 ViewSpace 深度
-float3 CurrentWorldPos = WorldPosition;   // 当前点的世界坐标 (用于采样纹理)
+float CurrentDepth = ViewStartPos.z;    // 当前点的 ViewSpace 深度
+float3 CurrentWorldPos = WorldPosition; // 当前点的世界坐标 (用于采样纹理)
 
-for(int i =0; i< MaxSteps; i++)
-{
+float PrevSampledValue = 1.0; // 假设起始点在空气中(密度>0)
+float3 PrevWorldPos = CurrentWorldPos;
 
+float SampledValue = 1.0;
+
+for (int i = 0; i < MaxSteps; i++) {
     // 当前点的深度如果超过了场景深度(在View空间比较)，则返回0
-    if(CurrentDepth > SceneDepthLinear){
-       return float4(0,0,0,0);
+    if (CurrentDepth > SceneDepthLinear) {
+        return float4(0, 0, 0, 0);
     }
-    
-    // 当前世界位置转换为局部位置
-    float3 LocalPos = mul(float4(CurrentWorldPos,1.0), (WSDemote(GetWorldToLocal(Parameters)))).xyz;    
-    float3 UVW = (LocalPos - LocalBoundsMin)/LocalBoundsSize;
 
-   float SampledValue = 1.0; 
+    // 当前世界位置转换为局部位置
+    float3 LocalPos = mul(float4(CurrentWorldPos, 1.0), (WSDemote(GetWorldToLocal(Parameters)))).xyz;
+    float3 UVW = (LocalPos - LocalBoundsMin) / LocalBoundsSize;
 
     // 2. 只有在 UVW 范围内才真正采样纹理
     // 这样既避免了四方连续(Tiling)，又避免了边界闪烁
     bool bIsInside = all(UVW >= 0.0) && all(UVW <= 1.0);
-    
-    if(bIsInside)
-    {
+
+    if (bIsInside) {
         SampledValue = Texture3DSample(VolumeTex, VolumeTexSampler, UVW).x;
     }
 
-    if(SampledValue <=0)
-    {
+    if (SampledValue <= 0) {
         HitSurface = true;
-      
-        // 计算表面法线（通过梯度近似）
-        float3 offset = float3(0.05, 0, 0); // 一个小的偏移量
-        float densityX = Texture3DSample(VolumeTex, VolumeTexSampler, UVW + offset.xyy).x;
-        float densityY = Texture3DSample(VolumeTex, VolumeTexSampler, UVW + offset.yxy).x;
-        float densityZ = Texture3DSample(VolumeTex, VolumeTexSampler, UVW + offset.yyx).x;
-        SurfaceNormal = normalize(float3(densityX - SampledValue, densityY - SampledValue, densityZ - SampledValue));
-
-        // 简单的漫反射光照计算
-        float3 LightDir = normalize(float3(1, 1, 1)); // 示例光源方向
-        float Diffuse = max(0.2, dot(SurfaceNormal, LightDir)); // 包含环境光
-        SurfaceColor = float3(1, 0, 0) * Diffuse; // 材质基础颜色 * 光照
         break;
     }
 
+    // --- 循环末尾：更新"上一步"的数据 ---
+    PrevSampledValue = SampledValue;
+    PrevWorldPos = CurrentWorldPos;
 
-     // --- B. 步进 ---
-    // 1. 线性累加深度 
+    // --- B. 步进 ---
+    // 1. 线性累加深度
     CurrentDepth += DepthStep;
-    
-    // 2. 累加世界坐标 
+
+    // 2. 累加世界坐标
     CurrentWorldPos += WorldSpaceRayDir * StepSize;
-    
 }
 
-if(HitSurface){
-   return float4(SurfaceColor, 1.0);
+if (HitSurface) {
+    // [核心优化]：线性插值计算精确表面位置
+    // 公式推导：我们想找 t，使得 lerp(PrevVal, CurrVal, t) == 0
+    // 结果：t = PrevVal / (PrevVal - CurrVal)
+    // 注意防止除以0 (虽然理论上跨越0点不会分母为0，但为了安全加个极小值)
+    float t = PrevSampledValue / (PrevSampledValue - SampledValue + 0.000001);
+
+    // 获取平滑后的世界坐标
+    float3 RefinedWorldPos = lerp(PrevWorldPos, CurrentWorldPos, t);
+
+    // 重新计算平滑后的 UVW，用于法线采样
+    float3 RefinedLocalPos = mul(float4(RefinedWorldPos, 1.0), (WSDemote(GetWorldToLocal(Parameters)))).xyz;
+    float3 RefinedUVW = (RefinedLocalPos - LocalBoundsMin) / LocalBoundsSize;
+
+    float3 NOffset = float3(NormalOffset, 0, 0); // 稍微加大一点 Offset 可以获得更平滑的法线
+
+    // X轴梯度: (右 - 左)
+    float valX_Pos = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW + NOffset.xyy)).x;
+    float valX_Neg = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW - NOffset.xyy)).x;
+    float gradX = valX_Pos - valX_Neg;
+
+    // Y轴梯度: (前 - 后)
+    float valY_Pos = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW + NOffset.yxy)).x;
+    float valY_Neg = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW - NOffset.yxy)).x;
+    float gradY = valY_Pos - valY_Neg;
+
+    // Z轴梯度: (上 - 下)
+    float valZ_Pos = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW + NOffset.yyx)).x;
+    float valZ_Neg = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW - NOffset.yyx)).x;
+    float gradZ = valZ_Pos - valZ_Neg;
+
+    SurfaceNormal = normalize(float3(gradX, gradY, gradZ));
+
+    // 简单的漫反射光照计算
+    float Diffuse = max(0.2, dot(SurfaceNormal, normalize(LightDir.xyz))); // 包含环境光
+    SurfaceColor = BaseColor.xyz * Diffuse;               // 材质基础颜色 * 光照
+
+    return float4(SurfaceColor, 1.0);
 }
-else{
-   return 0;
+else {
+    return 0;
 }
