@@ -6,8 +6,23 @@ Texture3D<float> OriginalSDF;
 SamplerState OriginalSDFSampler;
 Texture3D<float> ToolSDF;
 SamplerState ToolSDFSampler;
-RWTexture3D<float> DynamicSDF;
+RWTexture3D<float> OutputSDF;
 
+// Uniform Buffer
+cbuffer CutUB
+{
+    float3 TargetLocalBoundsMin;
+    float3 TargetLocalBoundsMax;
+    float3 ToolLocalBoundsMin;
+    float3 ToolLocalBoundsMax;
+    float4x4 TargetToToolTransform;
+    float4x4 ToolToTargetTransform;
+    int3 SDFDimensions;
+    float VoxelSize;
+    float IsoValue;
+    int3 UpdateRegionMin;
+    int3 UpdateRegionMax;
+};
 
 // 采样SDF纹理（将世界坐标转换为纹理UV）
 float SampleSDF(Texture3D<float> SDFTex, SamplerState Sampler, float3 Pos, float3 SDFBoundsMin, float3 SDFBoundsMax)
@@ -17,10 +32,10 @@ float SampleSDF(Texture3D<float> SDFTex, SamplerState Sampler, float3 Pos, float
 }
 
 // 通过DispatchedThreadID获取它在SDF局部坐标系的坐标
-float3 VoxelToObjectPos(int3 GlobalVoxelID, int3 SDFDimensions, float3 ObjectLocalBoundsMin, float3 ObjectLocalBoundsMax)
+float3 VoxelToObjectPos(int3 GlobalVoxelID, int3 SDFDimensions, float3 TargetLocalBoundsMin, float3 TargetLocalBoundsMax)
 {
-    float3 Step = (ObjectLocalBoundsMax - ObjectLocalBoundsMin) / (float3)SDFDimensions;
-    return ObjectLocalBoundsMin + (GlobalVoxelID + 0.5f) * Step;
+    float3 Step = (TargetLocalBoundsMax - TargetLocalBoundsMin) / (float3) SDFDimensions;
+    return TargetLocalBoundsMin + (GlobalVoxelID + 0.5f) * Step;
 }
 
 // 检查一个点是否在一个范围内
@@ -44,28 +59,28 @@ float3 GetToolUV(float3 PosInToolSpace, float3 ToolLocalBoundsMin, float3 ToolLo
 void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
 {
     // 转换为全局体素坐标
-    int3 GlobalVoxelID = CutUB.UpdateRegionMin + DispatchThreadID;
+    int3 GlobalVoxelID = UpdateRegionMin + DispatchThreadID;
     
     // 边界检查
-    if (any(GlobalVoxelID >= CutUB.UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
+    if (any(GlobalVoxelID >= UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
         return;
     
     // 1. 计算物体局部坐标
-    float3 ObjectPosInLocalSpace = VoxelToObjectPos(GlobalVoxelID, CutUB.SDFDimensions,CutUB.ObjectLocalBoundsMin, CutUB.ObjectLocalBoundsMax);
+    float3 TargetPosInLocalSpace = VoxelToObjectPos(GlobalVoxelID, SDFDimensions, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
     // 2. 采样原始物体SDF（直接在物体局部坐标系）
-    float OriginalSDFValue = SampleSDF(OriginalSDF, OriginalSDFSampler,ObjectPosInLocalSpace, CutUB.ObjectLocalBoundsMin, CutUB.ObjectLocalBoundsMax);
+    float OriginalSDFValue = SampleSDF(OriginalSDF, OriginalSDFSampler,TargetPosInLocalSpace, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
     // 3. 将物体局部坐标转换到工具局部坐标系
-    float4 ToolSpacePos4 = mul(CutUB.ObjectToToolTransform, float4(ObjectPosInLocalSpace, 1.0));
+    float4 ToolSpacePos4 = mul(TargetToToolTransform, float4(TargetPosInLocalSpace, 1.0));
     float3 ToolSpacePos = ToolSpacePos4.xyz / ToolSpacePos4.w;
     
     // 4. 检查是否在工具边界内（快速剔除）
-    if (!IsInToolLocalBounds(ToolSpacePos, CutUB.ToolLocalBoundsMin, CutUB.ToolLocalBoundsMax))
+    if (!IsInToolLocalBounds(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax))
         return;
     
     // 5. 采样工具SDF（工具局部坐标系）
-    float3 ToolUV = GetToolUV(ToolSpacePos, CutUB.ToolLocalBoundsMin, CutUB.ToolLocalBoundsMax);
+    float3 ToolUV = GetToolUV(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax);
     float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);
     
     // 6. 布尔运算：切削 = 保留物体内部(负值)且不在工具内部(正值)的部分
@@ -75,5 +90,5 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     float ResultSDF = max(OriginalSDFValue, -ToolSDFValue);
     
     // 7. 写入结果
-    DynamicSDF[GlobalVoxelID] = ResultSDF;
+    OutputSDF[GlobalVoxelID] = ResultSDF;
 }

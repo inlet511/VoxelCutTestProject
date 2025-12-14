@@ -5,9 +5,9 @@
 #include "CoreMinimal.h"
 #include "DynamicMeshActor.h"
 #include "Components/SceneComponent.h"
+#include "Engine/TextureRenderTargetVolume.h"
 #include "GPUSDFCutter.generated.h"
 
-DECLARE_DYNAMIC_DELEGATE_OneParam(FOnMeshGenerated, UDynamicMeshComponent*, Component);
 
 class UVolumeTexture;
 class UDynamicMeshComponent;
@@ -23,7 +23,7 @@ public:
 
 	// 初始化SDF纹理
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
-	void InitSDFTextures(
+	void InitResources(
 		UVolumeTexture* InOriginalSDF,
 		UVolumeTexture* InToolSDF,
 		const FBox& TargetLocalBox,
@@ -44,6 +44,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
 	UVolumeTexture* ToolSDFTexture = nullptr;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
+	UTextureRenderTargetVolume* VolumeRT = nullptr;
+
 	// 目标网格组件（用于渲染）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
 	ADynamicMeshActor* TargetMeshActor = nullptr;
@@ -51,8 +54,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
 	ADynamicMeshActor* CutToolActor = nullptr;
 
-	// 网格生成完成回调
-	FOnMeshGenerated OnMeshGenerated;
 
 protected:
 	// Called when the game starts
@@ -64,8 +65,6 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
-	// GPU资源初始化
-	void InitGPUResources();
 
 	// 局部更新调度
 	void DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles)> AsyncCallback);
@@ -73,13 +72,10 @@ private:
 	// 工具在切削对象空间的Local AABB
 	void CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax);
 
-	// 数据回读和网格更新
-	void ReadbackMeshData(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
-	void UpdateDynamicMesh(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles);
-
 	// 当前状态
 	FTransform CurrentObjectTransform;
 	FTransform CurrentToolTransform;
+
 	bool bToolTransformDirty = false;
 	bool bGPUResourcesInitialized = false;
 
@@ -97,17 +93,14 @@ private:
 	void CalculateToolDimensions();
 	FTransform GetToolWorldTransform() const;
 
-	// GPU资源
-	TRefCountPtr<IPooledRenderTarget> DynamicSDFTexturePooled;
-
 	FTextureRHIRef OriginalSDFRHIRef;
 	FTextureRHIRef ToolSDFRHIRef;
+	FTextureRHIRef VolumeRTRHIRef;
 
-	// 双缓冲网格数据
-	TArray<FVector> MeshVertices[2];
-	TArray<FIntVector> MeshTriangles[2];
-	int32 CurrentMeshBuffer = 0;
-	bool bHasPendingMeshData = false;
 
+	// 上一次更新的区域（用于优化）
+	FIntVector LastUpdateMin;
+	FIntVector LastUpdateMax;
+	bool bHasLastUpdateRegion = false;
 
 };

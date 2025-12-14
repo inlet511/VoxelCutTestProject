@@ -7,14 +7,14 @@
 // 局部更新参数
 BEGIN_UNIFORM_BUFFER_STRUCT(FCutUB, )
 	// 物体和工具的本地边界
-	SHADER_PARAMETER(FVector3f, ObjectLocalBoundsMin)
-	SHADER_PARAMETER(FVector3f, ObjectLocalBoundsMax)
+	SHADER_PARAMETER(FVector3f, TargetLocalBoundsMin)
+	SHADER_PARAMETER(FVector3f, TargetLocalBoundsMax)
 	SHADER_PARAMETER(FVector3f, ToolLocalBoundsMin)
 	SHADER_PARAMETER(FVector3f, ToolLocalBoundsMax)
 	    
 	// 物体局部坐标系到工具局部坐标系的变换
-	SHADER_PARAMETER(FMatrix44f, ObjectToToolTransform)
-	SHADER_PARAMETER(FMatrix44f, ToolToObjectTransform)
+	SHADER_PARAMETER(FMatrix44f, TargetToToolTransform)
+	SHADER_PARAMETER(FMatrix44f, ToolToTargetTransform)
 	    
 	// SDF参数
 	SHADER_PARAMETER(FIntVector, SDFDimensions)
@@ -39,7 +39,7 @@ public:
 		SHADER_PARAMETER_SAMPLER(SamplerState, OriginalSDFSampler)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, ToolSDF)
 		SHADER_PARAMETER_SAMPLER(SamplerState, ToolSDFSampler)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D<float>, DynamicSDF)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D<float>, OutputSDF)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
