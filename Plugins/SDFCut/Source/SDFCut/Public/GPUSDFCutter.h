@@ -44,16 +44,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
 	UVolumeTexture* ToolSDFTexture = nullptr;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
+	UPROPERTY()
 	UTextureRenderTargetVolume* VolumeRT = nullptr;
 
 	// 目标网格组件（用于渲染）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
-	ADynamicMeshActor* TargetMeshActor = nullptr;
+	class AStaticMeshActor* TargetMeshActor = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
 	ADynamicMeshActor* CutToolActor = nullptr;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GPU SDF Cutter")
+	UMaterialInterface* SDFMaterialInstance = nullptr;
+
+	UMaterialInstanceDynamic* SDFMaterialInstanceDynamic;
 
 protected:
 	// Called when the game starts

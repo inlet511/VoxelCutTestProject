@@ -10,6 +10,9 @@
 #include "RenderGraphUtils.h"
 #include "UpdateSDFShader.h"
 #include "DynamicMesh/MeshNormals.h"
+#include "Engine/TextureRenderTargetVolume.h"
+#include "Engine/StaticMeshActor.h"
+
 
 UE_DISABLE_OPTIMIZATION
 
@@ -37,7 +40,7 @@ void UGPUSDFCutter::BeginPlay()
 		InitResources(
 			OriginalSDFTexture,
 			ToolSDFTexture,
-			TargetMeshActor->GetDynamicMeshComponent()->GetLocalBounds().GetBox(),
+			TargetMeshActor->GetStaticMeshComponent()->Bounds.GetBox(),
 			VoxelSize);
 	}
 }
@@ -82,6 +85,25 @@ void UGPUSDFCutter::InitResources(
 	CalculateToolDimensions();
 	CurrentToolTransform = GetToolWorldTransform();
 
+	// 创建VolumeRT
+	VolumeRT = NewObject<UTextureRenderTargetVolume>(GetTransientPackage(),NAME_None);
+	VolumeRT->OverrideFormat = PF_R32_FLOAT;	
+	VolumeRT->SizeX = InOriginalSDF->GetSizeX();
+	VolumeRT->SizeY = InOriginalSDF->GetSizeY();
+	VolumeRT->SizeZ = InOriginalSDF->GetSizeZ();
+	VolumeRT->UpdateResource();
+
+	// 创建SDF渲染材质实例
+	SDFMaterialInstanceDynamic = UMaterialInstanceDynamic::Create(SDFMaterialInstance, this);
+	if (VolumeRT)
+	{
+		SDFMaterialInstanceDynamic->SetTextureParameterValue(FName("VolumeTexture"), VolumeRT);
+	}
+	// 分配材质实例给目标网格
+	TargetMeshActor->GetStaticMeshComponent()->SetMaterial(0, SDFMaterialInstanceDynamic);
+
+
+
 	// 初始化GPU资源
 	if (bGPUResourcesInitialized || !VolumeRT)
 	{
@@ -92,7 +114,10 @@ void UGPUSDFCutter::InitResources(
 	// 1. 存储外部纹理的RHI引用
 	OriginalSDFRHIRef = OriginalSDFTexture->GetResource()->GetTextureRHI();
 	ToolSDFRHIRef = ToolSDFTexture->GetResource()->GetTextureRHI();
-	VolumeRTRHIRef = VolumeRT->GetResource()->GetTextureRHI();
+	//VolumeRTRHIRef = VolumeRT->GetResource()->GetTextureRHI();
+
+	// 获取资源对象的指针（CPU端的FTextureResource指针是立即有效的）
+	FTextureResource* DestVolumeResource = VolumeRT->GetResource();
 
 	SDFDimensions = FIntVector(
 		OriginalSDFTexture->GetSizeX(),
@@ -100,19 +125,23 @@ void UGPUSDFCutter::InitResources(
 		OriginalSDFTexture->GetSizeZ()
 	);
 
-	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this, OriginalTextureRHI = OriginalSDFRHIRef](FRHICommandListImmediate& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this, OriginalTextureRHI = OriginalSDFRHIRef, DestVolumeResource](FRHICommandListImmediate& RHICmdList)
 	{
 		FRDGBuilder GraphBuilder(RHICmdList);
 
 		// 注册外部资源
-		FRDGTextureRef RDGOriginalSDFTexture = RegisterExternalTexture(GraphBuilder, OriginalTextureRHI, TEXT("VolumeTexture"));
-		FRDGTextureRef DestTexture = RegisterExternalTexture(GraphBuilder, VolumeRTRHIRef, TEXT("DestVolumeRT"));
+		FRDGTextureRef OriginalTextureRef = RegisterExternalTexture(GraphBuilder, OriginalTextureRHI, TEXT("VolumeTexture"));
 
+		// 此时 UpdateResource 发出的 InitRHI 命令保证已经执行完成
+		FRHITexture* DestVolumeRHI = DestVolumeResource->GetTextureRHI();
+		FRDGTextureRef VolumeRTTextureRef = RegisterExternalTexture(GraphBuilder, DestVolumeRHI, TEXT("DestVolumeRT"));
 
 		// 复制整个纹理
-		AddCopyTexturePass(GraphBuilder, RDGOriginalSDFTexture, DestTexture);
+		AddCopyTexturePass(GraphBuilder, OriginalTextureRef, VolumeRTTextureRef);
 
-		GraphBuilder.Execute();		
+		GraphBuilder.Execute();
+
+		RHICmdList.Transition(FRHITransitionInfo(DestVolumeRHI, ERHIAccess::Unknown, ERHIAccess::SRVGraphics));
 	});
 
 	bGPUResourcesInitialized = true;
@@ -142,7 +171,7 @@ void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransfo
 	}
 
 	// 切削对象的LocalBounds
-	TargetLocalBounds = TargetMeshActor->GetDynamicMeshComponent()->GetLocalBounds().GetBox();
+	TargetLocalBounds = TargetMeshActor->GetStaticMeshComponent()->Bounds.GetBox();
 
 	// 工具本地AABB
 	FBox ToolLocalBox = CutToolActor->GetDynamicMeshComponent()->GetLocalBounds().GetBox();
@@ -225,22 +254,36 @@ void UGPUSDFCutter::DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Ve
 	float CapturedVoxelSize = VoxelSize;
 
 
+	// 获取资源指针
+	FTextureResource* ToolResource = ToolSDFTexture->GetResource();
+	FTextureResource* OriginalResource = OriginalSDFTexture->GetResource();
+	FTextureResource* VolumeResource = VolumeRT->GetResource();
+
 	ENQUEUE_RENDER_COMMAND(GPUSDFCutter_LocalUpdate)(
 		[this,UpdateMin, UpdateMax,
 		CapturedToolTransform, CapturedObjectTransform,
 		CapturedTargetBounds, CapturedToolBounds,
-		CapturedSDFDimensions, CapturedVoxelSize]
+		CapturedSDFDimensions, CapturedVoxelSize,
+		ToolResource, OriginalResource, VolumeResource]
 		(FRHICommandListImmediate& RHICmdList)
 	{
+		
+		// 在渲染线程获取 RHI
+		FRHITexture* ToolRHI = ToolResource ? ToolResource->GetTextureRHI() : nullptr;
+		FRHITexture* OriginalRHI = OriginalResource ? OriginalResource->GetTextureRHI() : nullptr;
+		FRHITexture* VolumeRHI = VolumeResource ? VolumeResource->GetTextureRHI() : nullptr;
+
+		if (!ToolRHI || !OriginalRHI || !VolumeRHI) return;
+
 		FRDGBuilder GraphBuilder(RHICmdList);
 
 		// 注册纹理资源
 		FRDGTextureRef OriginalTexture = RegisterExternalTexture(
-			GraphBuilder, OriginalSDFRHIRef, TEXT("OriginalSDF"));
+			GraphBuilder, OriginalRHI, TEXT("OriginalSDF"));
 		FRDGTextureRef ToolTexture = RegisterExternalTexture(
-			GraphBuilder, ToolSDFRHIRef, TEXT("ToolSDF"));
+			GraphBuilder, ToolRHI, TEXT("ToolSDF"));
 		FRDGTextureRef VolumeRTTexture = RegisterExternalTexture(
-			GraphBuilder, VolumeRTRHIRef, TEXT("VolumeRT"));
+			GraphBuilder, VolumeRHI, TEXT("VolumeRT"));
 
 
 		auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();
