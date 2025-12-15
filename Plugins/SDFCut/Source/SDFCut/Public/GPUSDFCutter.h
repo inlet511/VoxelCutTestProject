@@ -56,7 +56,8 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GPU SDF Cutter")
 	UMaterialInterface* SDFMaterialInstance = nullptr;
-
+	
+	UPROPERTY()
 	UMaterialInstanceDynamic* SDFMaterialInstanceDynamic;
 
 protected:
