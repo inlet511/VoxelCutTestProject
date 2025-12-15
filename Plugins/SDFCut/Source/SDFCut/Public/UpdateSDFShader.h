@@ -14,12 +14,9 @@ BEGIN_UNIFORM_BUFFER_STRUCT(FCutUB, )
 	    
 	// 物体局部坐标系到工具局部坐标系的变换
 	SHADER_PARAMETER(FMatrix44f, TargetToToolTransform)
-	SHADER_PARAMETER(FMatrix44f, ToolToTargetTransform)
 	    
 	// SDF参数
 	SHADER_PARAMETER(FIntVector, SDFDimensions)
-	SHADER_PARAMETER(float, VoxelSize)
-	SHADER_PARAMETER(float, IsoValue)
 	    
 	// 更新区域（物体局部坐标系的体素范围）
 	SHADER_PARAMETER(FIntVector, UpdateRegionMin)
@@ -35,8 +32,8 @@ public:
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FCutUB, Params)
-		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, OriginalSDF)
-		SHADER_PARAMETER_SAMPLER(SamplerState, OriginalSDFSampler)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, InputSDF)
+		SHADER_PARAMETER_SAMPLER(SamplerState, InputSDFSampler)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture3D<float>, ToolSDF)
 		SHADER_PARAMETER_SAMPLER(SamplerState, ToolSDFSampler)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D<float>, OutputSDF)

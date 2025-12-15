@@ -2,8 +2,8 @@
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
 
-Texture3D<float> OriginalSDF;
-SamplerState OriginalSDFSampler;
+Texture3D<float> InputSDF;
+SamplerState InputSDFSampler;
 Texture3D<float> ToolSDF;
 SamplerState ToolSDFSampler;
 RWTexture3D<float> OutputSDF;
@@ -16,10 +16,7 @@ cbuffer CutUB
     float3 ToolLocalBoundsMin;
     float3 ToolLocalBoundsMax;
     float4x4 TargetToToolTransform;
-    float4x4 ToolToTargetTransform;
     int3 SDFDimensions;
-    float VoxelSize;
-    float IsoValue;
     int3 UpdateRegionMin;
     int3 UpdateRegionMax;
 };
@@ -69,7 +66,7 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     float3 TargetPosInLocalSpace = VoxelToObjectPos(GlobalVoxelID, SDFDimensions, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
     // 2. 采样原始物体SDF（直接在物体局部坐标系）
-    float OriginalSDFValue = SampleSDF(OriginalSDF, OriginalSDFSampler,TargetPosInLocalSpace, TargetLocalBoundsMin, TargetLocalBoundsMax);
+    float OriginalSDFValue = SampleSDF(InputSDF, InputSDFSampler,TargetPosInLocalSpace, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
     // 3. 将物体局部坐标转换到工具局部坐标系
     float4 ToolSpacePos4 = mul(TargetToToolTransform, float4(TargetPosInLocalSpace, 1.0));

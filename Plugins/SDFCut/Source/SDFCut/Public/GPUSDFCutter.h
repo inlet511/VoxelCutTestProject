@@ -23,11 +23,7 @@ public:
 
 	// 初始化SDF纹理
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
-	void InitResources(
-		UVolumeTexture* InOriginalSDF,
-		UVolumeTexture* InToolSDF,
-		const FBox& TargetLocalBox,
-		float InVoxelSize = 5.0f);
+	void InitResources();
 
 	// 每帧更新切削工具Transform
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
@@ -72,7 +68,7 @@ public:
 private:
 
 	// 局部更新调度
-	void DispatchLocalUpdate(TFunction<void(const TArray<FVector>& Vertices, const TArray<FIntVector>& Triangles)> AsyncCallback);
+	void DispatchLocalUpdate();
 
 	// 工具在切削对象空间的Local AABB
 	void CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax);
