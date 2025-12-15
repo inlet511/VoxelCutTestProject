@@ -25,14 +25,6 @@ void AYourActor::BeginPlay()
 	if (!SourceTexture || !BaseMaterial || !MyMeshActor) return;
 
 
-
-
-	// --- 关键修改 1: 强制关闭流送并等待高分辨率 Mip 加载 ---
-	// 告诉流送系统：我们需要最高精度的 Mip
-	SourceTexture->SetForceMipLevelsToBeResident(30.0f); 
-	// 强制阻塞 GameThread 直到流送完成 (确保 TextureRHI 变成 1024x1024)
-	SourceTexture->WaitForStreaming(true,true); 
-
 	int32 TextureSizeX = SourceTexture->GetSizeX();
 	int32 TextureSizeY = SourceTexture->GetSizeY();
 	
@@ -45,6 +37,9 @@ void AYourActor::BeginPlay()
 	SourceTexture->UpdateResource(); // 强制刷新资源，防止 RHI 为空
 	FTextureResource* SrcRes = SourceTexture->GetResource();
 	FTextureRenderTargetResource* DstRes = MyRenderTarget->GameThread_GetRenderTargetResource();
+
+
+
 
 	// 3. 入队渲染命令 (Render Thread)
 	ENQUEUE_RENDER_COMMAND(Cmd_CopyTexture)(
@@ -73,7 +68,7 @@ void AYourActor::BeginPlay()
 		});
 
 	// 4. 创建并设置动态材质 (Game Thread)
-	// 此时 RenderTarget 对象已存在，可以直接绑定，GPU 会保证在 DrawCall 时上面的 Copy 命令已完成
+// 此时 RenderTarget 对象已存在，可以直接绑定，GPU 会保证在 DrawCall 时上面的 Copy 命令已完成
 	UMaterialInstanceDynamic* DynMat = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 	DynMat->SetTextureParameterValue(TextureParameterName, MyRenderTarget);
 
