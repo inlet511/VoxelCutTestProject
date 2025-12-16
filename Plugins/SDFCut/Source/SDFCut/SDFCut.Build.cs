@@ -41,6 +41,7 @@ public class SDFCut : ModuleRules
 				"RHI",
 				"GeometryFramework", 
 				"Projects", 
+				"MeshConversion"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

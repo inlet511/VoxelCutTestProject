@@ -38,7 +38,7 @@ if (!InputMesh)
 
     // Fast Winding Number 用于判断点在内部还是外部 (Inside/Outside)
     // 需要确保 Mesh 是封闭的 (Watertight) 效果才最好，但 FWN 对烂模型也有一定鲁棒性
-    UE::Geometry::FDynamicMeshAABBTree3<UE::Geometry::FDynamicMesh3> WindingEngine(&DynMesh);
+    UE::Geometry::FDynamicMeshAABBTree3 WindingEngine(&DynMesh);
     WindingEngine.Build();
 
     // 3. 计算体素网格参数
@@ -81,9 +81,7 @@ if (!InputMesh)
        float Distance = (float)FMath::Sqrt(DistSq);
 
         // 2. 计算 Winding Number (判断内外)
-        // 理论上 >= 0.5 表示在内部，< 0.5 表示在外部
-        double WindingNum = WindingEngine.GetValue(SamplePos);
-        bool bIsInside = FMath::Abs(WindingNum) >= 0.5;
+        bool bIsInside = WindingEngine.IsInside(SamplePos);
 
         // SDF 定义: 内部为负，外部为正
         if (bIsInside)
@@ -106,7 +104,7 @@ if (!InputMesh)
     // 设置纹理属性
     NewTexture->Source.Init(ResolutionXY, ResolutionXY, Slices, 1, ETextureSourceFormat::TSF_R32F);
     NewTexture->SRGB = false;
-    NewTexture->CompressionSettings = TC_HDR; // 高精度
+    NewTexture->CompressionSettings = TC_SingleFloat; // 高精度
     NewTexture->MipGenSettings = TMGS_NoMipmaps; // 通常SDF不需要Mipmap，或者根据需求开启
 
     // 6. 填充纹理数据
@@ -121,14 +119,6 @@ if (!InputMesh)
     NewTexture->UpdateResource();
     Package->MarkPackageDirty();
     FAssetRegistryModule::AssetCreated(NewTexture);
-
-    // 这一步是可选的：保存到磁盘
-    /*
-    FString FilePath = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
-    FSavePackageArgs SaveArgs;
-    SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-    UPackage::SavePackage(Package, NewTexture, *FilePath, SaveArgs);
-    */
 
     UE_LOG(LogTemp, Log, TEXT("SDF Volume Texture Created: %s"), *PackageName);
 
