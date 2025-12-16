@@ -62,16 +62,17 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     if (any(GlobalVoxelID > UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
         return;
     
-    // 1. 计算物体局部坐标
+    // 1. 计算当前体素在物体局部坐标
     float3 TargetPosInLocalSpace = VoxelToObjectPos(GlobalVoxelID, SDFDimensions, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
     // 2. 采样原始物体SDF（直接在物体局部坐标系）
     float OriginalSDFValue = SampleSDF(InputSDF, InputSDFSampler,TargetPosInLocalSpace, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
-    // 3. 将物体局部坐标转换到工具局部坐标系
-    float4 ToolSpacePos4 = mul(TargetToToolTransform, float4(TargetPosInLocalSpace, 1.0));
+    // 3. 将物体局部坐标转换到刀具局部坐标系
+    float4 ToolSpacePos4 = mul(float4(TargetPosInLocalSpace, 1.0), TargetToToolTransform);
     float3 ToolSpacePos = ToolSpacePos4.xyz / ToolSpacePos4.w;
-
+    
+    
     float ResultValue = OriginalSDFValue;
     
     // 4. 检查是否在工具边界内（快速剔除）
@@ -82,13 +83,6 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
         float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);    
         
         ResultValue = (ToolSDFValue<0) ? -ToolSDFValue: OriginalSDFValue;
-        
-        // float Distance = distance(ToolUV, float3(0.5,0.5,0.5));
-        //  if (Distance < 0.005)
-        //  {
-        //      // 挖掉
-        //      ResultValue = 0.1;
-        //  }
     }
 
     // 7. 写入结果

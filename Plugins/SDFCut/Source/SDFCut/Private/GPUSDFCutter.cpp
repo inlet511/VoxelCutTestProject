@@ -213,7 +213,8 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
 
 	// 捕获必要的参数
-	FTransform TargetSpaceToToolSpaceTransform = CurrentToolTransform * CurrentTargetTransform.Inverse();
+	//FTransform TargetSpaceToToolSpaceTransform = CurrentToolTransform * CurrentTargetTransform.Inverse();
+	FTransform TargetSpaceToToolSpaceTransform = CurrentTargetTransform * CurrentToolTransform.Inverse();
 	FBox CapturedTargetBounds = TargetLocalBounds;
 	FBox CapturedToolBounds = ToolLocalBounds;
 	FIntVector CapturedSDFDimensions = SDFDimensions;
