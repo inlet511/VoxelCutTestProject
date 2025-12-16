@@ -59,7 +59,7 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     int3 GlobalVoxelID = UpdateRegionMin + DispatchThreadID;
     
     // 边界检查
-    if (any(GlobalVoxelID >= UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
+    if (any(GlobalVoxelID > UpdateRegionMax) || any(GlobalVoxelID < int3(0,0,0)))
         return;
     
     // 1. 计算物体局部坐标
@@ -71,16 +71,25 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     // 3. 将物体局部坐标转换到工具局部坐标系
     float4 ToolSpacePos4 = mul(TargetToToolTransform, float4(TargetPosInLocalSpace, 1.0));
     float3 ToolSpacePos = ToolSpacePos4.xyz / ToolSpacePos4.w;
+
+    float ResultValue = OriginalSDFValue;
     
     // 4. 检查是否在工具边界内（快速剔除）
-    if (!IsInToolLocalBounds(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax))
-        return;
-    
-    // 5. 采样工具SDF（工具局部坐标系）
-    float3 ToolUV = GetToolUV(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax);
-    float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);    
-    
-    float ResultValue = (ToolSDFValue<0) ? ToolSDFValue : OriginalSDFValue;
+    if (IsInToolLocalBounds(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax))
+    {
+        // 5. 采样工具SDF（工具局部坐标系）
+         float3 ToolUV = GetToolUV(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax);
+        float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);    
+        
+        ResultValue = (ToolSDFValue<0) ? -ToolSDFValue*0.01 : OriginalSDFValue;
+        
+        // float Distance = distance(ToolUV, float3(0.5,0.5,0.5));
+        //  if (Distance < 0.005)
+        //  {
+        //      // 挖掉
+        //      ResultValue = 0.1;
+        //  }
+    }
 
     // 7. 写入结果
     OutputSDF[GlobalVoxelID] = ResultValue;

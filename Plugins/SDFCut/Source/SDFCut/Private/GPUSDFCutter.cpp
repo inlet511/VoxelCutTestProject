@@ -3,35 +3,23 @@
 
 #include "GPUSDFCutter.h"
 
-#include "DynamicMeshEditor.h"
-#include "DynamicMesh/DynamicMesh3.h"
 #include "Components/DynamicMeshComponent.h"
 #include "Engine/VolumeTexture.h"
 #include "RenderGraphUtils.h"
 #include "UpdateSDFShader.h"
-#include "DynamicMesh/MeshNormals.h"
 #include "Engine/TextureRenderTargetVolume.h"
 #include "Engine/StaticMeshActor.h"
 #include "Kismet/KismetRenderingLibrary.h"
 
-
-UE_DISABLE_OPTIMIZATION
-
 IMPLEMENT_UNIFORM_BUFFER_STRUCT(FCutUB, "CutUB");
 IMPLEMENT_GLOBAL_SHADER(FUpdateSDFCS, "/SDF/Shaders/DynamicSDFUpdateCS.usf", "LocalSDFUpdateKernel", SF_Compute);
 
-// Sets default values for this component's properties
 UGPUSDFCutter::UGPUSDFCutter()
 {
-	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
-	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
-	// ...
 }
 
-
-// Called when the game starts
 void UGPUSDFCutter::BeginPlay()
 {
 	Super::BeginPlay();
@@ -40,24 +28,22 @@ void UGPUSDFCutter::BeginPlay()
 	{
 		InitResources();
 	}
-
 }
 
 
-// Called every frame
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	if (!bGPUResourcesInitialized || !TargetMeshActor || !CutToolActor)
 		return;
 
-	UpdateToolTransform(CutToolActor->GetActorTransform());
+	UpdateToolTransform();
+	UpdateTargetTransform();
 
 	// 只有工具位置变化才发送新请求
-	if (bToolTransformDirty)
+	if (bRelativeTransformDirty)
 	{
 		DispatchLocalUpdate();
-
-		bToolTransformDirty = false;
+		bRelativeTransformDirty = false;
 	}
 }
 
@@ -77,7 +63,6 @@ void UGPUSDFCutter::InitResources()
 		OriginalSDFTexture->GetSizeZ()
 	);
 
-
 	// 切削对象的LocalBounds
 	TargetLocalBounds = TargetMeshActor->GetStaticMeshComponent()->CalcLocalBounds().GetBox();
 	
@@ -86,7 +71,7 @@ void UGPUSDFCutter::InitResources()
 
 	CalculateToolDimensions();
 
-	CurrentToolTransform = GetToolWorldTransform();
+	CurrentToolTransform = CutToolActor->GetTransform();
 
 	// 创建VolumeRT
 	int32 TextureSizeX = SDFDimensions.X;
@@ -142,19 +127,24 @@ void UGPUSDFCutter::InitResources()
 }
 
 
-void UGPUSDFCutter::UpdateToolTransform(const FTransform& InToolTransform)
+void UGPUSDFCutter::UpdateToolTransform()
 {
-	if (!CurrentToolTransform.Equals(InToolTransform))
+	FTransform NewTransform = CutToolActor->GetActorTransform();
+	if (!CurrentToolTransform.Equals(NewTransform))
 	{
-		CurrentToolTransform = InToolTransform;
-		bToolTransformDirty = true;
+		CurrentToolTransform = NewTransform;
+		bRelativeTransformDirty = true;
 	}
 }
 
-void UGPUSDFCutter::UpdateObjectTransform(const FTransform& InObjectTransform)
+void UGPUSDFCutter::UpdateTargetTransform()
 {
-	CurrentObjectTransform = InObjectTransform;
-	bToolTransformDirty = true; // 物体移动也需要更新
+	FTransform NewTransform = TargetMeshActor->GetActorTransform();
+	if (!CurrentTargetTransform.Equals(NewTransform))
+	{
+		CurrentTargetTransform = NewTransform;
+		bRelativeTransformDirty = true;
+	}
 }
 
 
@@ -166,11 +156,10 @@ void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransfo
 		return;
 	}
 
-
 	// Target 这里表示被切削对象的局部坐标系
 	FTransform TargetToWorld = TargetMeshActor->GetActorTransform();
 	FTransform WorldToTarget = TargetToWorld.Inverse();
-	FTransform ToolToTarget = WorldToTarget * ToolTransform;
+	FTransform ToolToTarget = ToolTransform * WorldToTarget;
 
 	FBox ToolBoundsInTargetSpace = ToolLocalBounds.TransformBy(ToolToTarget);
 
@@ -202,7 +191,7 @@ void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransfo
 
 	// 限制在有效范围内
 	OutVoxelMin = OutVoxelMin.ComponentMax(FIntVector(0, 0, 0)); // 下限不能是负数
-	OutVoxelMax = OutVoxelMax.ComponentMin(SDFDimensions - FIntVector(1, 1, 1)); // 上限不能超过尺寸
+	OutVoxelMax = OutVoxelMax.ComponentMin(SDFDimensions); // 上限不能超过尺寸
 }
 
 
@@ -224,7 +213,7 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
 
 	// 捕获必要的参数
-	FTransform TargetSpaceToToolSpaceTransform = CurrentObjectTransform.Inverse() * CurrentToolTransform;
+	FTransform TargetSpaceToToolSpaceTransform = CurrentToolTransform * CurrentTargetTransform.Inverse();
 	FBox CapturedTargetBounds = TargetLocalBounds;
 	FBox CapturedToolBounds = ToolLocalBounds;
 	FIntVector CapturedSDFDimensions = SDFDimensions;
@@ -257,6 +246,11 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 			FRDGTextureRef VolumeRTTexture = RegisterExternalTexture(
 				GraphBuilder, VolumeRHI, TEXT("VolumeRT"));
 
+			// 增加一个中间缓冲，复制一份原图
+			FRDGTextureDesc TempDesc = VolumeRTTexture->Desc;
+			FRDGTextureRef InputSnapshotTexture = GraphBuilder.CreateTexture(TempDesc, TEXT("SDFInputSnapshot"));
+			AddCopyTexturePass(GraphBuilder, VolumeRTTexture, InputSnapshotTexture);
+
 
 			auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();
 			CutUBParams->TargetLocalBoundsMin = FVector3f(CapturedTargetBounds.Min);
@@ -272,10 +266,10 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
 			auto* PassParams = GraphBuilder.AllocParameters<FUpdateSDFCS::FParameters>();
 			PassParams->Params = GraphBuilder.CreateUniformBuffer(CutUBParams);
-			PassParams->InputSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(VolumeRTTexture));
+			PassParams->InputSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(InputSnapshotTexture));
 			PassParams->ToolSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ToolTexture));
 			PassParams->OutputSDF = GraphBuilder.CreateUAV(VolumeRTTexture);
-
+			
 			PassParams->InputSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 			PassParams->ToolSDFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
@@ -307,13 +301,3 @@ void UGPUSDFCutter::CalculateToolDimensions()
 	ToolOriginalSize = ToolLocalBounds.GetSize();
 }
 
-FTransform UGPUSDFCutter::GetToolWorldTransform() const
-{
-	if (CutToolActor)
-	{
-		return CutToolActor->GetActorTransform();
-	}
-	return CurrentToolTransform;
-}
-
-UE_ENABLE_OPTIMIZATION

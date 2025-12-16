@@ -25,13 +25,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
 	void InitResources();
 
-	// 每帧更新切削工具Transform
+	// 更新切削工具Transform
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
-	void UpdateToolTransform(const FTransform& InToolTransform);
+	void UpdateToolTransform();
 
-	// 更新物体Transform（可选，如果物体也在移动）
+	// 更新切削对象Transform（可选，如果物体也在移动）
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
-	void UpdateObjectTransform(const FTransform& InObjectTransform);
+	void UpdateTargetTransform();
+	
 
 	// SDF纹理（CPU端引用）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
@@ -74,10 +75,11 @@ private:
 	void CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin, FIntVector& OutVoxelMax);
 
 	// 当前状态
-	FTransform CurrentObjectTransform;
+	FTransform CurrentTargetTransform;
 	FTransform CurrentToolTransform;
 
-	bool bToolTransformDirty = false;
+	// 工具和切削对象的相对Transform已更新
+	bool bRelativeTransformDirty = false;
 	bool bGPUResourcesInitialized = false;
 
 	// SDF参数
@@ -92,7 +94,6 @@ private:
 
 	// 计算切割工具尺寸信息
 	void CalculateToolDimensions();
-	FTransform GetToolWorldTransform() const;
 
 	FTextureRHIRef OriginalSDFRHIRef;
 	FTextureRHIRef ToolSDFRHIRef;
