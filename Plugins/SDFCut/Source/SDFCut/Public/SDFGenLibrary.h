@@ -31,6 +31,7 @@ public:
 		FString AssetName, 
 		int32 ResolutionXY = 128, 
 		int32 Slices = 128,
-		float BoundsScale = 1.1f
+		float BoundsScale = 1.1f,
+		bool bGenerate2D = false
 	);
 };
