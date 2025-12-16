@@ -92,7 +92,15 @@ void UGPUSDFCutter::InitResources()
 	int32 TextureSizeX = SDFDimensions.X;
 	int32 TextureSizeY = SDFDimensions.Y;
 	int32 TextureSizeZ = SDFDimensions.Z;
-	VolumeRT = UKismetRenderingLibrary::CreateRenderTargetVolume(this, TextureSizeX, TextureSizeY, TextureSizeZ, RTF_R32f);
+	VolumeRT = UKismetRenderingLibrary::CreateRenderTargetVolume(
+		this,
+		TextureSizeX,
+		TextureSizeY,
+		TextureSizeZ,
+		RTF_R32f,
+		FLinearColor::Black,
+		false,
+		true);
 	VolumeRT->bCanCreateUAV = true;
 
 	// 创建SDF渲染材质实例
@@ -216,8 +224,7 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
 
 	// 捕获必要的参数
-	FTransform CapturedToolTransform = CurrentToolTransform;
-	FTransform CapturedObjectTransform = CurrentObjectTransform;
+	FTransform TargetSpaceToToolSpaceTransform = CurrentObjectTransform.Inverse() * CurrentToolTransform;
 	FBox CapturedTargetBounds = TargetLocalBounds;
 	FBox CapturedToolBounds = ToolLocalBounds;
 	FIntVector CapturedSDFDimensions = SDFDimensions;
@@ -229,14 +236,13 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
 	ENQUEUE_RENDER_COMMAND(GPUSDFCutter_LocalUpdate)(
 		[this,UpdateMin, UpdateMax,
-			CapturedToolTransform, CapturedObjectTransform,
 			CapturedTargetBounds, CapturedToolBounds,
+			TargetSpaceToToolSpaceTransform,
 			CapturedSDFDimensions,
 			ToolResource, RenderTargetResource]
 	(FRHICommandListImmediate& RHICmdList)
 		{
-
-			
+		
 			// 在渲染线程获取 RHI
 			FRHITexture* ToolRHI = ToolResource ? ToolResource->GetTextureRHI() : nullptr;
 			FRHITexture* VolumeRHI = RenderTargetResource ? RenderTargetResource->GetTextureRHI() : nullptr;
@@ -258,7 +264,7 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 			CutUBParams->ToolLocalBoundsMin = FVector3f(CapturedToolBounds.Min);
 			CutUBParams->ToolLocalBoundsMax = FVector3f(CapturedToolBounds.Max);
 
-			CutUBParams->TargetToToolTransform = FMatrix44f(CurrentObjectTransform.ToMatrixWithScale());
+			CutUBParams->TargetToToolTransform = FMatrix44f(TargetSpaceToToolSpaceTransform.ToMatrixWithScale());
 			CutUBParams->SDFDimensions = CapturedSDFDimensions;
 			CutUBParams->UpdateRegionMin = UpdateMin;
 			CutUBParams->UpdateRegionMax = UpdateMax;

@@ -78,14 +78,10 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     
     // 5. 采样工具SDF（工具局部坐标系）
     float3 ToolUV = GetToolUV(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax);
-    float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);
+    float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);    
     
-    // 6. 布尔运算：切削 = 保留物体内部(负值)且不在工具内部(正值)的部分
-    // 等价于：Result = max(OriginalSDF, -ToolSDF)
-    // - 如果工具SDF为负（在工具内部）：-ToolSDF为正，结果为正 → 被切削掉
-    // - 如果工具SDF为正（在工具外部）：-ToolSDF为负，保留OriginalSDF
-    float ResultSDF = max(OriginalSDFValue, -ToolSDFValue);
-    
+    float ResultValue = (ToolSDFValue<0) ? ToolSDFValue : OriginalSDFValue;
+
     // 7. 写入结果
-    OutputSDF[GlobalVoxelID] = ResultSDF;
+    OutputSDF[GlobalVoxelID] = ResultValue;
 }
