@@ -210,15 +210,12 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 		UE_LOG(LogTemp, Warning, TEXT("Invalid update region, skipping"));
 		return;
 	}
-
-
+	
 	// 捕获必要的参数
-	//FTransform TargetSpaceToToolSpaceTransform = CurrentToolTransform * CurrentTargetTransform.Inverse();
 	FTransform TargetSpaceToToolSpaceTransform = CurrentTargetTransform * CurrentToolTransform.Inverse();
 	FBox CapturedTargetBounds = TargetLocalBounds;
 	FBox CapturedToolBounds = ToolLocalBounds;
 	FIntVector CapturedSDFDimensions = SDFDimensions;
-
 
 	// 获取资源指针
 	FTextureResource* ToolResource = ToolSDFTexture->GetResource();
@@ -247,12 +244,6 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 			FRDGTextureRef VolumeRTTexture = RegisterExternalTexture(
 				GraphBuilder, VolumeRHI, TEXT("VolumeRT"));
 
-			// 增加一个中间缓冲，复制一份原图
-			FRDGTextureDesc TempDesc = VolumeRTTexture->Desc;
-			FRDGTextureRef InputSnapshotTexture = GraphBuilder.CreateTexture(TempDesc, TEXT("SDFInputSnapshot"));
-			AddCopyTexturePass(GraphBuilder, VolumeRTTexture, InputSnapshotTexture);
-
-
 			auto* CutUBParams = GraphBuilder.AllocParameters<FCutUB>();
 			CutUBParams->TargetLocalBoundsMin = FVector3f(CapturedTargetBounds.Min);
 			CutUBParams->TargetLocalBoundsMax = FVector3f(CapturedTargetBounds.Max);
@@ -264,10 +255,9 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 			CutUBParams->UpdateRegionMin = UpdateMin;
 			CutUBParams->UpdateRegionMax = UpdateMax;
 
-
 			auto* PassParams = GraphBuilder.AllocParameters<FUpdateSDFCS::FParameters>();
 			PassParams->Params = GraphBuilder.CreateUniformBuffer(CutUBParams);
-			PassParams->InputSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(InputSnapshotTexture));
+			PassParams->InputSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(VolumeRTTexture));
 			PassParams->ToolSDF = GraphBuilder.CreateSRV(FRDGTextureSRVDesc::Create(ToolTexture));
 			PassParams->OutputSDF = GraphBuilder.CreateUAV(VolumeRTTexture);
 			
