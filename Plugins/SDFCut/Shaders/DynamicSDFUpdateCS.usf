@@ -77,12 +77,24 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     
     // 4. 检查是否在工具边界内（快速剔除）
     if (IsInToolLocalBounds(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax))
-    {
+    {       
         // 5. 采样工具SDF（工具局部坐标系）
-         float3 ToolUV = GetToolUV(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax);
-        float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);    
-        
-        ResultValue = (ToolSDFValue<0) ? -ToolSDFValue: OriginalSDFValue;
+        float3 ToolUV = GetToolUV(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax);
+        float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);
+
+        if (ToolSDFValue < 0) // 在笔刷范围内
+        {
+            // 如果本身已经是正值，判断新值是不是绝对值更大（离的更远），如果更大，则更新        
+            if (OriginalSDFValue >= 0) 
+            {
+                if (abs(ToolSDFValue) > OriginalSDFValue)
+                    ResultValue = -ToolSDFValue;
+            }
+            else// 如果本身是负值，直接更新为笔刷的相反值
+            {
+                ResultValue = -ToolSDFValue;
+            }
+        }
     }
 
     // 7. 写入结果

@@ -102,8 +102,8 @@ if (HitSurface) {
 
     SurfaceNormal = normalize(float3(gradX, gradY, gradZ));
 
-    // --- 3. 高级光照计算 (Advanced Lighting) ---
-
+   // --- 3. 高级光照计算 (Advanced Lighting) ---
+    
     // A. 准备向量
     float3 L = normalize(LightDir.xyz);           // 光源方向
     float3 V = normalize(-WorldSpaceRayDir);      // 视线方向 (从表面指向相机)
