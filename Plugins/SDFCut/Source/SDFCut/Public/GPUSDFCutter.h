@@ -10,7 +10,7 @@
 
 
 class UVolumeTexture;
-class UDynamicMeshComponent;
+class AStaticMeshActor;
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class SDFCUT_API UGPUSDFCutter : public USceneComponent
@@ -46,10 +46,10 @@ public:
 
 	// 目标网格组件（用于渲染）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
-	class AStaticMeshActor* TargetMeshActor = nullptr;
+	AStaticMeshActor* TargetMeshActor = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
-	ADynamicMeshActor* CutToolActor = nullptr;
+	AStaticMeshActor* CutToolActor = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GPU SDF Cutter")
 	UMaterialInterface* SDFMaterialInstance = nullptr;
@@ -64,7 +64,7 @@ protected:
 public:
 	// Called every frame
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
-		FActorComponentTickFunction* ThisTickFunction) override;
+	FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
 

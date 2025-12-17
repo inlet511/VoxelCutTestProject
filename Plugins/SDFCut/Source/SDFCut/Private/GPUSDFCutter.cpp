@@ -3,7 +3,6 @@
 
 #include "GPUSDFCutter.h"
 
-#include "Components/DynamicMeshComponent.h"
 #include "Engine/VolumeTexture.h"
 #include "RenderGraphUtils.h"
 #include "UpdateSDFShader.h"
@@ -289,9 +288,9 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 void UGPUSDFCutter::CalculateToolDimensions()
 {
 	// 从CutToolActor的网格组件获取边界
-	UDynamicMeshComponent* ToolMeshComponent = CutToolActor->GetDynamicMeshComponent();
+	UStaticMeshComponent* ToolMeshComponent = CutToolActor->GetStaticMeshComponent();
 
-	ToolLocalBounds = ToolMeshComponent->GetLocalBounds().GetBox();
+	ToolLocalBounds = ToolMeshComponent->CalcLocalBounds().GetBox();
 	// 计算工具尺寸
 	ToolOriginalSize = ToolLocalBounds.GetSize();
 }
