@@ -10,6 +10,10 @@
 #include "Engine/TextureRenderTargetVolume.h"
 #include "Engine/StaticMeshActor.h"
 #include "Kismet/KismetRenderingLibrary.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "TextureResource.h"
+#include "RHIStaticStates.h"
+#include "RenderResource.h"
 
 IMPLEMENT_UNIFORM_BUFFER_STRUCT(FCutUB, "CutUB");
 IMPLEMENT_GLOBAL_SHADER(FUpdateSDFCS, "/SDF/Shaders/DynamicSDFUpdateCS.usf", "LocalSDFUpdateKernel", SF_Compute);

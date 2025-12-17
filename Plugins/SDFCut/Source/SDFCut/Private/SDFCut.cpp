@@ -2,6 +2,8 @@
 
 #include "SDFCut.h"
 #include "Interfaces/IPluginManager.h"
+#include "Misc/Paths.h"
+#include "ShaderCore.h"
 
 #define LOCTEXT_NAMESPACE "FSDFCutModule"
 
