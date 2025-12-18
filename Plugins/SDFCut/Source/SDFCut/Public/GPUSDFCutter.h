@@ -33,6 +33,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
 	void UpdateTargetTransform();
 	
+	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
+	bool GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFValue, FVector& OutNormal);
 
 	// SDF纹理（CPU端引用）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
@@ -99,10 +101,23 @@ private:
 	FTextureRHIRef ToolSDFRHIRef;
 	FTextureRHIRef VolumeRTRHIRef;
 
+	// 初始化CPU端缓存
+	void InitCPUData();
+    
+	void UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector UpdateSize, TArray<float>& LocalData);
+	
+	// 请求从GPU回读数据
+	void RequestSDFReadback();
 
-	// 上一次更新的区域（用于优化）
-	FIntVector LastUpdateMin;
-	FIntVector LastUpdateMax;
-	bool bHasLastUpdateRegion = false;
+	// 辅助：三线性插值采样
+	float SampleSDFTrilinear(const FVector& VoxelCoord) const;
+	// 辅助：获取体素索引
+	int32 GetVoxelIndex(int32 X, int32 Y, int32 Z) const;
+
+	// CPU端缓存的SDF数据 (线性数组: Z * Y * X)
+	TArray<float> CPU_SDFData;
+    
+	// 标记是否正在回读，防止重入
+	bool bIsReadingBack = false;
 
 };
