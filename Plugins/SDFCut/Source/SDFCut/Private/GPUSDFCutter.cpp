@@ -464,15 +464,12 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
             // 1. 创建一个临时的 RHI 纹理作为 Staging Buffer (大小等于切削区域)
             // 我们需要显式创建 RHI 资源以便在 GraphBuilder 执行后依然能访问它进行读取
-            const FRHITextureCreateDesc StagingDesc =
-                FRHITextureCreateDesc::Create3D(TEXT("SDFStaging"), RegionSize.X, RegionSize.Y, RegionSize.Z, PF_R32_FLOAT)
-                .SetFlags(ETextureCreateFlags::ShaderResource); // 也可以尝试 ETextureCreateFlags::CPUReadback 如果平台支持
+            const FRDGTextureDesc  StagingDesc =
+                FRDGTextureDesc::Create3D(RegionSize, PF_R32_FLOAT,FClearValueBinding::None,TexCreate_ShaderResource);
 
-            FTextureRHIRef StagingTextureRHI = RHICreateTexture(StagingDesc);
-
-            // 2. 将 RHI 资源注册进 RDG
-            FRDGTextureRef StagingTextureRDG = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(StagingTextureRHI, TEXT("SDFStagingRDG")));
-
+			// 2. 直接在 RDG 中创建纹理
+			FRDGTextureRef StagingTextureRDG = GraphBuilder.CreateTexture(StagingDesc, TEXT("SDFStagingRDG"));
+        	
             // 3. 添加 Copy Pass：只拷贝切削区域
             FRHICopyTextureInfo CopyInfo;
             CopyInfo.Size = RegionSize;
@@ -481,28 +478,36 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
             AddCopyTexturePass(GraphBuilder, VolumeRTTexture, StagingTextureRDG, CopyInfo);
 
+			// 4. 【关键步骤】提取资源
+			// 我们需要一个 TRefCountPtr<IPooledRenderTarget> 来承接 RDG 分配的资源
+			TRefCountPtr<IPooledRenderTarget> StagingPooledRenderTarget;
+			GraphBuilder.QueueTextureExtraction(StagingTextureRDG, &StagingPooledRenderTarget);
+
             // 4. 执行 RDG
             // GraphBuilder.Execute() 会执行 CS 和 Copy，此时 StagingTextureRHI 里就有了最新的局部数据
             GraphBuilder.Execute();
 
             // --- C. 执行回读 ---
             
+			// 获取底层的 RHI 纹理
+    		FRHITexture* StagingRHI = StagingPooledRenderTarget->GetRHI();
+
             // 准备接收数据的数组
         	TArray<FFloat16Color> TempPixels;
             // 读取 Staging Texture (它很小，所以很快)
             // 注意：Read3DSurfaceFloatData 会导致 CPU 等待 GPU 完成 Copy 操作
-            RHICmdList.Read3DSurfaceFloatData(StagingTextureRHI, FIntRect(0, 0, RegionSize.X, RegionSize.Y), FIntPoint(0, RegionSize.Z), TempPixels);
+            RHICmdList.Read3DSurfaceFloatData(StagingRHI, FIntRect(0, 0, RegionSize.X, RegionSize.Y), FIntPoint(0, RegionSize.Z), TempPixels);
 
         	// 3. 转换为 float 数组
 			TArray<float> LocalFloatPixels;
 			LocalFloatPixels.SetNumUninitialized(TempPixels.Num());
         	
-        	// 并行或串行转换数据 (SDF通常存储在R通道)
-			for (int32 i = 0; i < TempPixels.Num(); ++i)
+        	// 并行转换数据 (SDF通常存储在R通道)
+        	ParallelFor(TempPixels.Num(), [&](int32 i)
 			{
 				LocalFloatPixels[i] = TempPixels[i].R.GetFloat();
-			}
-        	
+			}, EParallelForFlags::None);
+        				
             // --- D. 返回 GameThread 更新数据 ---            
             // 使用 MoveTemp 转移数据所有权，避免拷贝
             AsyncTask(ENamedThreads::GameThread, [this, LocalData = MoveTemp(LocalFloatPixels), UpdateMin, RegionSize]() mutable
