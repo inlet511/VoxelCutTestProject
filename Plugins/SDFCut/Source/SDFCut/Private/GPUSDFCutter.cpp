@@ -13,6 +13,7 @@
 #include "TextureResource.h"
 #include "RHIStaticStates.h"
 #include "RenderResource.h"
+#include "Async/Async.h"
 
 IMPLEMENT_UNIFORM_BUFFER_STRUCT(FCutUB, "CutUB");
 IMPLEMENT_GLOBAL_SHADER(FUpdateSDFCS, "/SDF/Shaders/DynamicSDFUpdateCS.usf", "LocalSDFUpdateKernel", SF_Compute);

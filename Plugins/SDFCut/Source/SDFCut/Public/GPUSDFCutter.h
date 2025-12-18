@@ -105,9 +105,6 @@ private:
 	void InitCPUData();
     
 	void UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector UpdateSize, TArray<float>& LocalData);
-	
-	// 请求从GPU回读数据
-	void RequestSDFReadback();
 
 	// 辅助：三线性插值采样
 	float SampleSDFTrilinear(const FVector& VoxelCoord) const;
