@@ -203,6 +203,47 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	return true;
 }
 
+float UGPUSDFCutter::CalculateCurrentVolume(bool bWorldSpace)
+{
+	if (CPU_SDFData.Num() == 0 || !TargetMeshActor)
+	{
+		return 0.0f;
+	}
+
+	// 1. 计算单个体素的体积 (Local Space)
+	// VoxelSize 是在 InitResources 中根据 Bounds 和 Dimensions 计算出的单边长
+	// 假设体素是完美的立方体
+	const float SingleVoxelVolume = VoxelSize * VoxelSize * VoxelSize;
+
+	// 2. 统计在表面内部的体素数量 (SDF <= 0)
+	// 使用原子操作以支持并行计算
+	std::atomic<int32> InsideVoxelCount(0);
+
+	// 并行遍历整个 SDF 数组
+	ParallelFor(CPU_SDFData.Num(), [&](int32 Index)
+	{
+		// 假设 SDF <= 0 表示物体内部 (这是标准惯例，如果你的Shader是反的，请改为 >= 0)
+		if (CPU_SDFData[Index] <= 0.0f)
+		{
+			InsideVoxelCount++;
+		}
+	});
+
+	// 3. 计算 Local 空间总体积
+	float LocalVolume = InsideVoxelCount.load() * SingleVoxelVolume;
+
+	// 4. 如果需要世界空间体积，乘以 Actor 的缩放系数
+	if (bWorldSpace)
+	{
+		FVector ActorScale = TargetMeshActor->GetActorScale3D();
+		// 体积缩放是三个轴向缩放的乘积
+		float ScaleFactor = FMath::Abs(ActorScale.X * ActorScale.Y * ActorScale.Z);
+		return LocalVolume * ScaleFactor;
+	}
+
+	return LocalVolume;
+}
+
 void UGPUSDFCutter::InitCPUData()
 {
     // Initialize array size

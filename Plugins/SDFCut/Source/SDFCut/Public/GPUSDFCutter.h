@@ -36,6 +36,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
 	bool GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFValue, FVector& OutNormal);
 
+	UFUNCTION(BlueprintCallable, Category = "SDF")
+	float CalculateCurrentVolume(bool bWorldSpace = true);
+	
 	// SDF纹理（CPU端引用）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
 	UVolumeTexture* OriginalSDFTexture = nullptr;
