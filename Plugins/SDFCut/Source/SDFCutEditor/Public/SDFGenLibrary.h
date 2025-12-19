@@ -32,6 +32,7 @@ public:
 		int32 ResolutionXY = 128, 
 		int32 Slices = 128,
 		float BoundsScale = 1.1f,
+		int32 MaterialID = 0,
 		bool bGenerate2D = false
 	);
 };

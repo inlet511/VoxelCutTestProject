@@ -10,7 +10,7 @@
 using namespace UE::Geometry;
 
 UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh, FString PackagePath,
-                                                          FString AssetName, int32 ResolutionXY, int32 Slices, float BoundsScale, bool bGenerate2D)
+                                                          FString AssetName, int32 ResolutionXY, int32 Slices, float BoundsScale,int32 MaterialID, bool bGenerate2D)
 {
     if (!InputMesh)
     {
@@ -69,7 +69,7 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
     VoxelSize.Z = Size.Z / (float)Slices;
 
     int32 TotalVoxels = ResolutionXY * ResolutionXY * Slices;
-    TArray<float> RawSDFData;
+    TArray<FFloat16Color> RawSDFData;
     RawSDFData.SetNumUninitialized(TotalVoxels);
 
     // 4. 并行计算 SDF
@@ -102,9 +102,11 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
         {
             Distance *= -1.0f;
         }
+        
+        float VoxelMatID = bIsInside ? (float)MaterialID : 0.0f; 
 
         // 存储数据
-        RawSDFData[Index] = Distance;
+        RawSDFData[Index] = FFloat16Color(FLinearColor(Distance, VoxelMatID, 0.0f, 1.0f));
     });
 
     // 5. 创建 Volume Texture 资源
@@ -132,16 +134,16 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
     UVolumeTexture* NewTexture = NewObject<UVolumeTexture>(Package, *VolAssetName, RF_Public | RF_Standalone | RF_MarkAsRootSet);
     
     // 设置纹理属性
-    NewTexture->Source.Init(ResolutionXY, ResolutionXY, Slices, 1, ETextureSourceFormat::TSF_R32F);
+    NewTexture->Source.Init(ResolutionXY, ResolutionXY, Slices, 1, ETextureSourceFormat::TSF_RGBA16F);
     NewTexture->SRGB = false;
-    NewTexture->CompressionSettings = TC_SingleFloat; // 高精度
+    NewTexture->CompressionSettings = TC_HDR; // 高精度
     NewTexture->MipGenSettings = TMGS_NoMipmaps; // 通常SDF不需要Mipmap，或者根据需求开启
 
     // 6. 填充纹理数据
     // -----------------------------------------------------------------------
     uint8* MipData = NewTexture->Source.LockMip(0);
     // TSF_R32F 对应 float，直接内存拷贝
-    FMemory::Memcpy(MipData, RawSDFData.GetData(), RawSDFData.Num() * sizeof(float));
+    FMemory::Memcpy(MipData, RawSDFData.GetData(), RawSDFData.Num() * sizeof(FFloat16Color));
     NewTexture->Source.UnlockMip(0);
 
     // 7. 更新资源并保存
@@ -181,7 +183,7 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
         int32 AtlasHeight = NumRows * ResolutionXY;
 
         // 准备 2D 数据数组
-        TArray<float> AtlasData;
+        TArray<FFloat16Color> AtlasData;
         AtlasData.SetNumZeroed(AtlasWidth * AtlasHeight); // 初始化为0
 
         // 并行搬运数据
@@ -225,9 +227,9 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
 
         UTexture2D* NewTex2D = NewObject<UTexture2D>(Tex2DPackage, *Tex2DAssetName, RF_Public | RF_Standalone | RF_MarkAsRootSet);
 
-        NewTex2D->Source.Init(AtlasWidth, AtlasHeight, 1, 1, ETextureSourceFormat::TSF_R32F);
+        NewTex2D->Source.Init(AtlasWidth, AtlasHeight, 1, 1, ETextureSourceFormat::TSF_RGBA16F);
         NewTex2D->SRGB = false;
-        NewTex2D->CompressionSettings = TC_SingleFloat;
+        NewTex2D->CompressionSettings = TC_HDR;
         NewTex2D->MipGenSettings = TMGS_NoMipmaps;
         NewTex2D->Filter = TF_Bilinear;
         NewTex2D->AddressX = TA_Clamp;
@@ -237,7 +239,7 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
         NewTex2D->PowerOfTwoMode = ETexturePowerOfTwoSetting::None;
 
         uint8* AtlasMipData = NewTex2D->Source.LockMip(0);
-        FMemory::Memcpy(AtlasMipData, AtlasData.GetData(), AtlasData.Num() * sizeof(float));
+        FMemory::Memcpy(AtlasMipData, AtlasData.GetData(), AtlasData.Num() * sizeof(FFloat16Color));
         NewTex2D->Source.UnlockMip(0);
 
         NewTex2D->UpdateResource();
