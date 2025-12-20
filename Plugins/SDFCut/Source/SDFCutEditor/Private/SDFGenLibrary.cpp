@@ -253,3 +253,165 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
     return NewTexture;
 	
 }
+void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTexture* TargetTexture, AActor* VolumeActor, AActor* BrushActor, int32 MaterialID, bool bErase)
+{
+if (!TargetTexture || !VolumeActor || !BrushActor) return;
+    UWorld* World = WorldContextObject->GetWorld();
+    if (!World) return;
+
+    UStaticMeshComponent* VolMeshComp = VolumeActor->FindComponentByClass<UStaticMeshComponent>();
+    if (!VolMeshComp || !VolMeshComp->GetStaticMesh()) return;
+
+    // --- 准备空间数据 ---
+    FBox MeshLocalBounds = VolMeshComp->GetStaticMesh()->GetBoundingBox();
+    FVector LocalMin = MeshLocalBounds.Min;
+    FVector LocalSize = MeshLocalBounds.GetSize();
+    
+    LocalSize.X = FMath::Max(LocalSize.X, 1.0f);
+    LocalSize.Y = FMath::Max(LocalSize.Y, 1.0f);
+    LocalSize.Z = FMath::Max(LocalSize.Z, 1.0f);
+
+    FTransform VolLocalToWorld = VolMeshComp->GetComponentTransform();
+    FTransform VolWorldToLocal = VolLocalToWorld.Inverse(); // 修正：之前这里可能写反了，这里确保逻辑正确
+    
+    FBox BrushWorldBox = BrushActor->GetComponentsBoundingBox();
+    FBox BrushLocalBox = BrushWorldBox.TransformBy(VolWorldToLocal);
+
+    FVector UVMin = (BrushLocalBox.Min - LocalMin) / LocalSize;
+    FVector UVMax = (BrushLocalBox.Max - LocalMin) / LocalSize;
+
+    int32 SizeX = TargetTexture->GetSizeX();
+    int32 SizeY = TargetTexture->GetSizeY();
+    int32 SizeZ = TargetTexture->GetSizeZ();
+
+    int32 StartX = FMath::Clamp(FMath::FloorToInt(UVMin.X * SizeX), 0, SizeX - 1);
+    int32 EndX   = FMath::Clamp(FMath::CeilToInt(UVMax.X * SizeX), 0, SizeX - 1);
+    int32 StartY = FMath::Clamp(FMath::FloorToInt(UVMin.Y * SizeY), 0, SizeY - 1);
+    int32 EndY   = FMath::Clamp(FMath::CeilToInt(UVMax.Y * SizeY), 0, SizeY - 1);
+    int32 StartZ = FMath::Clamp(FMath::FloorToInt(UVMin.Z * SizeZ), 0, SizeZ - 1);
+    int32 EndZ   = FMath::Clamp(FMath::CeilToInt(UVMax.Z * SizeZ), 0, SizeZ - 1);
+
+    UE_LOG(LogTemp, Warning, TEXT("[BakeBrush] 范围: X[%d-%d] Y[%d-%d] Z[%d-%d]"), StartX, EndX, StartY, EndY, StartZ, EndZ);
+
+    if (StartX > EndX || StartY > EndY || StartZ > EndZ) return;
+
+    // --- 锁定内存 ---
+    FFloat16Color* MipDataF16 = (FFloat16Color*)TargetTexture->Source.LockMip(0);
+    if (!MipDataF16) return;
+
+    FThreadSafeCounter TotalWritesCounter;
+
+    // --- 并行计算 ---
+    int32 NumZSlices = EndZ - StartZ + 1;
+
+    ParallelFor(NumZSlices, [&](int32 LoopIndex)
+    {
+        int32 z = StartZ + LoopIndex;
+
+        FCollisionQueryParams QueryParams;
+        QueryParams.bTraceComplex = true; 
+        QueryParams.AddIgnoredActor(VolumeActor); 
+        
+        TArray<FHitResult> HitsPos;
+        TArray<FHitResult> HitsNeg;
+        HitsPos.Reserve(4);
+        HitsNeg.Reserve(4);
+
+        // 检测函数：从外部向内部 (Inbound Ray)
+        auto CheckAxisInbound = [&](const FVector& TargetPos, const FVector& Direction) -> bool
+        {
+            HitsPos.Reset();
+            HitsNeg.Reset();
+
+            FVector StartPos = TargetPos + (Direction * 100000.0f);
+            FVector StartNeg = TargetPos - (Direction * 100000.0f);
+
+            // 射线从无穷远射向体素中心
+            World->LineTraceMultiByChannel(HitsPos, StartPos, TargetPos, ECC_Visibility, QueryParams);
+            World->LineTraceMultiByChannel(HitsNeg, StartNeg, TargetPos, ECC_Visibility, QueryParams);
+
+            int32 CountPos = 0;
+            for (const FHitResult& Hit : HitsPos) { if (Hit.GetActor() == BrushActor) CountPos++; }
+
+            int32 CountNeg = 0;
+            for (const FHitResult& Hit : HitsNeg) { if (Hit.GetActor() == BrushActor) CountNeg++; }
+
+            // 必须两边都穿透了奇数次 (说明被夹在中间)
+            return (CountPos % 2 != 0) && (CountNeg % 2 != 0);
+        };
+
+        for (int y = StartY; y <= EndY; y++)
+        {
+            for (int x = StartX; x <= EndX; x++)
+            {
+                FVector UVW = FVector(x + 0.5f, y + 0.5f, z + 0.5f) / FVector(SizeX, SizeY, SizeZ);
+                FVector LocalPos = LocalMin + (LocalSize * UVW);
+                FVector VoxelWorldPos = VolLocalToWorld.TransformPosition(LocalPos);
+
+                int32 PassCount = 0;
+
+                // 分别检测3个轴，不再一票否决
+                if (CheckAxisInbound(VoxelWorldPos, FVector(0, 0, 1))) PassCount++; // Z
+                if (CheckAxisInbound(VoxelWorldPos, FVector(1, 0, 0))) PassCount++; // X
+                if (CheckAxisInbound(VoxelWorldPos, FVector(0, 1, 0))) PassCount++; // Y
+
+                // 只要有任意一个轴判定我们在内部，就认为是内部
+                // (解决了 Z 轴可能因为极点/接缝问题导致判定失败的情况)
+                if (PassCount >= 1)
+                {
+                    int32 Index = z * SizeX * SizeY + y * SizeX + x;
+                    MipDataF16[Index].G = FFloat16(bErase ? 0.0f : (float)MaterialID);
+                    TotalWritesCounter.Increment();
+                }
+            }
+        }
+    });
+
+    TargetTexture->Source.UnlockMip(0);
+    TargetTexture->UpdateResource();
+    TargetTexture->MarkPackageDirty();
+
+    if (TotalWritesCounter.GetValue() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[BakeBrush] 写入仍为 0。请确认 BrushActor 的 Collision Presets 是 BlockAll 且 ComplexAsSimple 已开启。"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log, TEXT("[BakeBrush] 成功！写入体素数量: %d"), TotalWritesCounter.GetValue());
+    }
+}
+
+
+void USDFGenLibrary::FillVolumeTextureGChannel(UVolumeTexture* TargetTexture, float FillValue)
+{
+    if (!TargetTexture) return;
+    
+    // 2. 锁定 Mip 0 获取内存指针
+    // 注意：这里假设纹理格式是 Float16 (RGBA16F)，这是 VolumeTexture 的标准格式
+    FFloat16Color* MipData = (FFloat16Color*)TargetTexture->Source.LockMip(0);
+    if (!MipData) return;
+
+    // 获取总像素数 (Width * Height * Depth)
+    int32 SizeX = TargetTexture->GetSizeX();
+    int32 SizeY = TargetTexture->GetSizeY();
+    int32 SizeZ = TargetTexture->GetSizeZ();
+    int32 TotalVoxels = SizeX * SizeY * SizeZ;
+
+    // 预先转换好 float -> float16，避免在循环里重复计算
+    FFloat16 ValF16 = FFloat16(FillValue);
+
+    // 3. 并行计算 (ParallelFor)
+    // 相比单线程循环，这在大尺寸纹理（如 256^3）上能快 4-8 倍
+    ParallelFor(TotalVoxels, [&](int32 Index)
+    {
+        // 只修改 G 通道，保留 R/B/A (如果不需要保留，直接赋值新颜色会更快一点点，但这样更安全)
+        MipData[Index].G = ValF16;
+    });
+
+    // 4. 解锁并更新资源
+    TargetTexture->Source.UnlockMip(0);
+    TargetTexture->UpdateResource();
+    TargetTexture->MarkPackageDirty(); // 标记为已修改（如果是在编辑器模式下）
+    
+    UE_LOG(LogTemp, Log, TEXT("[VolumeTools] 已将 %d 个体素的 G 通道填充为 %.2f"), TotalVoxels, FillValue);
+}
