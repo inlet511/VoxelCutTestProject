@@ -254,6 +254,8 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
     return NewTexture;
 	
 }
+
+
 void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTexture* TargetTexture, AActor* VolumeActor, AActor* BrushActor, int32 MaterialID, bool bErase)
 {
     if (!TargetTexture || !VolumeActor || !BrushActor) return;
@@ -295,13 +297,10 @@ void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTextu
     if (StartX > EndX || StartY > EndY || StartZ > EndZ) return;
 
     // --- 2. 计算平滑参数 ---
-    // 计算一个体素在世界空间中的平均大小
     FVector VoxelSizeWorldVec = VolLocalToWorld.TransformVector(LocalSize / FVector(SizeX, SizeY, SizeZ));
     float AvgVoxelSize = VoxelSizeWorldVec.GetAbs().GetMax(); 
-
-    // **柔和半径**：设定边缘过渡带的宽度。
-    // 1.5 * AvgVoxelSize 意味着边缘会有大约 1.5 个体素宽度的渐变区域。
-    // 数值越大越模糊，数值越小越锐利。
+    
+    // 保持 1.5 到 2.0 的平滑半径，配合法线修正后效果会非常均匀
     float SmoothWorldRadius = AvgVoxelSize * 1.5f; 
 
     // --- 3. 锁定内存 ---
@@ -318,22 +317,19 @@ void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTextu
         int32 z = StartZ + LoopIndex;
 
         FCollisionQueryParams QueryParams;
-        QueryParams.bTraceComplex = true; 
+        QueryParams.bTraceComplex = true; // 必须开启，以获取准确的三角面法线
         QueryParams.AddIgnoredActor(VolumeActor); 
         
-        // 线程局部变量，避免反复分配内存
         TArray<FHitResult> HitsPos;
         TArray<FHitResult> HitsNeg;
         HitsPos.Reserve(8);
         HitsNeg.Reserve(8);
 
-        // 修改后的检测函数：不仅返回是否在内部，还计算最近表面的距离
         auto CheckAxisAndGetDist = [&](const FVector& TargetPos, const FVector& Direction, float& OutCurrentMinDist) -> bool
         {
             HitsPos.Reset();
             HitsNeg.Reset();
 
-            // 射线长度给足
             FVector StartPos = TargetPos + (Direction * 100000.0f);
             FVector StartNeg = TargetPos - (Direction * 100000.0f);
 
@@ -341,35 +337,54 @@ void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTextu
             World->LineTraceMultiByChannel(HitsNeg, StartNeg, TargetPos, ECC_Visibility, QueryParams);
 
             int32 CountPos = 0;
-            float LocalMinDist = FLT_MAX; // 本次轴向检测到的最近距离
+            float LocalMinDist = FLT_MAX;
 
+            // --- 正向射线处理 ---
             for (const FHitResult& Hit : HitsPos) 
             { 
                 if (Hit.GetActor() == BrushActor) 
                 {
                     CountPos++;
-                    // 计算命中点到体素中心的距离
-                    float Dist = FVector::Dist(Hit.ImpactPoint, TargetPos);
-                    if (Dist < LocalMinDist) LocalMinDist = Dist;
+                    float RawDist = FVector::Dist(Hit.ImpactPoint, TargetPos);
+                    
+                    // [核心修正]：计算垂直距离 (Perpendicular Distance)
+                    // Dot(RayDir, Normal) 得到夹角的余弦值
+                    // 距离 * 余弦值 = 垂直于平面的距离
+                    float CosTheta = FMath::Abs(FVector::DotProduct(Direction, Hit.ImpactNormal));
+                    
+                    // 保护性 Clamp，防止法线异常导致距离归零
+                    CosTheta = FMath::Max(CosTheta, 0.05f); 
+
+                    float PerpDist = RawDist * CosTheta;
+
+                    if (PerpDist < LocalMinDist) LocalMinDist = PerpDist;
                 }
             }
 
             int32 CountNeg = 0;
+            // --- 负向射线处理 ---
             for (const FHitResult& Hit : HitsNeg) 
             { 
                 if (Hit.GetActor() == BrushActor) 
                 {
                     CountNeg++;
-                    float Dist = FVector::Dist(Hit.ImpactPoint, TargetPos);
-                    if (Dist < LocalMinDist) LocalMinDist = Dist;
+                    float RawDist = FVector::Dist(Hit.ImpactPoint, TargetPos);
+                    
+                    // [核心修正] 同上
+                    float CosTheta = FMath::Abs(FVector::DotProduct(Direction, Hit.ImpactNormal));
+                    CosTheta = FMath::Max(CosTheta, 0.05f);
+
+                    float PerpDist = RawDist * CosTheta;
+
+                    if (PerpDist < LocalMinDist) LocalMinDist = PerpDist;
                 }
             }
 
             bool bInside = (CountPos % 2 != 0) && (CountNeg % 2 != 0);
             
-            // 如果判定在内部，我们将这个轴向发现的最近距离贡献给全局最小值
             if (bInside)
             {
+                // 只有当我们确定在内部时，这个轴向测量的距离才是有效的“最近表面距离”的候选者
                 if (LocalMinDist < OutCurrentMinDist)
                 {
                     OutCurrentMinDist = LocalMinDist;
@@ -388,34 +403,25 @@ void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTextu
                 FVector VoxelWorldPos = VolLocalToWorld.TransformPosition(LocalPos);
 
                 int32 PassCount = 0;
-                float MinDistToSurface = FLT_MAX; // 记录该体素中心离最近表面的距离
+                float MinDistToSurface = FLT_MAX; 
 
-                // 分别检测3个轴，并更新 MinDistToSurface
                 if (CheckAxisAndGetDist(VoxelWorldPos, FVector(0, 0, 1), MinDistToSurface)) PassCount++;
                 if (CheckAxisAndGetDist(VoxelWorldPos, FVector(1, 0, 0), MinDistToSurface)) PassCount++;
                 if (CheckAxisAndGetDist(VoxelWorldPos, FVector(0, 1, 0), MinDistToSurface)) PassCount++;
 
-                // 只要判定为内部 (PassCount >= 1 是为了容错，严格来说应该是 3)
                 if (PassCount >= 1)
                 {
                     int32 Index = z * SizeX * SizeY + y * SizeX + x;
                     
-                    // --- 核心平滑逻辑 ---
-                    
-                    // 1. 计算归一化距离 (0.0 = 在表面, 1.0 = 在深处)
-                    // 防止 MinDistToSurface 还是 FLT_MAX (极少数情况)
                     float SafeDist = (MinDistToSurface == FLT_MAX) ? 0.0f : MinDistToSurface;
+                    
+                    // 计算 Alpha
                     float Alpha = FMath::Clamp(SafeDist / SmoothWorldRadius, 0.0f, 1.0f);
-
-                    // 2. 使用平滑阶梯函数 (SmoothStep) 让线性过渡变得更自然
-                    // 公式: x * x * (3 - 2 * x)
+                    
+                    // 使用更平滑的 Hermite 插值 (SmoothStep)
                     Alpha = Alpha * Alpha * (3.0f - 2.0f * Alpha);
 
-                    // 3. 计算最终值
-                    // 既然Shader支持，我们输出 MaterialID * Alpha
-                    // 例如 ID=2, Alpha=0.5 -> 输出 1.0
                     float FinalValue = (float)MaterialID * Alpha;
-
                     MipDataF16[Index].G = FFloat16(bErase ? 0.0f : FinalValue);
                     TotalWritesCounter.Increment();
                 }
@@ -426,10 +432,7 @@ void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTextu
     TargetTexture->Source.UnlockMip(0);
     TargetTexture->UpdateResource();
     TargetTexture->MarkPackageDirty();
-
-    UE_LOG(LogTemp, Log, TEXT("[BakeBrush] 完成。写入体素: %d, 平滑半径: %.2f"), TotalWritesCounter.GetValue(), SmoothWorldRadius);
 }
-
 
 void USDFGenLibrary::FillVolumeTextureGChannel(UVolumeTexture* TargetTexture, float FillValue)
 {

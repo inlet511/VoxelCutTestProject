@@ -24,7 +24,10 @@ float3 LocalBoundsSize = LocalBoundsMax - LocalBoundsMin;
 float3 WorldCameraPos = LWCHackToFloat(PrimaryView.WorldCameraOrigin);
 float3 WorldSpaceRayDir = normalize(-CameraVector); 
 
-
+// --- 2. 深度遮挡计算 (修复报错部分) ---
+// 直接使用从引脚传入的 SceneDepthInput
+// 注意：SceneDepth 节点返回的是“相机平面到物体的垂直距离”(View Space Z)
+// 我们需要把它转换成“沿着射线方向的距离”
 float SceneDepth = SceneDepthInput;
 
 // 计算视线方向和相机朝向的夹角余弦
@@ -98,6 +101,7 @@ for (int i = 0; i < 128; i++) {
         if (MatID == 0) ScatterColor = Color_A;
         else if (MatID == 1) ScatterColor = Color_B;
         else if (MatID == 2) ScatterColor = Color_C;
+        else if (MatID == 3) ScatterColor = Color_D;
         
         float RealDensity = LocalDensity * DensityScale;
         float ShadowTerm = saturate(exp(SDFValue * 5.0));
