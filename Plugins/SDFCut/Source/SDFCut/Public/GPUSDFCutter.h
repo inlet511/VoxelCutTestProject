@@ -17,7 +17,8 @@ enum EVolumeMaterial
 {
 	Enamel=0, // 牙釉质
 	Dentin=1, // 牙本质
-	Fill=2   // 填充物
+	Caries=2, // 龋坏部分
+	Fill=3   //  金属填充物
 };
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))

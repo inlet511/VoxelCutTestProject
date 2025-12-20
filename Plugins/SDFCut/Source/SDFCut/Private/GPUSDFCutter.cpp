@@ -522,7 +522,7 @@ void UGPUSDFCutter::DispatchLocalUpdate()
             // 1. 创建一个临时的 RHI 纹理作为 Staging Buffer (大小等于切削区域)
             // 我们需要显式创建 RHI 资源以便在 GraphBuilder 执行后依然能访问它进行读取
             const FRDGTextureDesc  StagingDesc =
-                FRDGTextureDesc::Create3D(RegionSize, PF_R32_FLOAT,FClearValueBinding::None,TexCreate_ShaderResource);
+                FRDGTextureDesc::Create3D(RegionSize, PF_FloatRGBA,FClearValueBinding::None,TexCreate_ShaderResource);
 
 			// 2. 直接在 RDG 中创建纹理
 			FRDGTextureRef StagingTextureRDG = GraphBuilder.CreateTexture(StagingDesc, TEXT("SDFStagingRDG"));

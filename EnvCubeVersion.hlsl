@@ -81,80 +81,147 @@ for (int i = 0; i < MaxSteps; i++) {
 
 [branch]
 if (HitSurface) {
-    // 精确表面位置插值
+    // ---- 1. 精确表面位置插值 ----
     float t = PrevSampledValue / (PrevSampledValue - SampledValue + 0.000001);
     float3 RefinedWorldPos = lerp(PrevWorldPos, CurrentWorldPos, t);
 
     float3 RefinedLocalPos = mul(float4(RefinedWorldPos, 1.0), (WSDemote(GetWorldToLocal(Parameters)))).xyz;
     float3 RefinedUVW = (RefinedLocalPos - LocalBoundsMin) / LocalBoundsSize;
 
-    float3 NOffset = float3(NormalOffset, 0, 0); 
+    // ---- 2. 获取材质ID ----
+    float RawMatVal = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW)).y;
+    int MatID = round(RawMatVal);
 
+    // ---- 3. 计算法线 ----
+    float3 NOffset = float3(NormalOffset, 0, 0); 
     // 梯度计算法线
     float valX_Pos = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW + NOffset.xyy)).x;
     float valX_Neg = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW - NOffset.xyy)).x;
     float gradX = valX_Pos - valX_Neg;
-
     float valY_Pos = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW + NOffset.yxy)).x;
     float valY_Neg = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW - NOffset.yxy)).x;
     float gradY = valY_Pos - valY_Neg;
-
     float valZ_Pos = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW + NOffset.yyx)).x;
     float valZ_Neg = Texture3DSample(VolumeTex, VolumeTexSampler, saturate(RefinedUVW - NOffset.yyx)).x;
     float gradZ = valZ_Pos - valZ_Neg;
-
     SurfaceNormal = normalize(float3(gradX, gradY, gradZ));
 
-    // --- 光照计算 ---
-    float3 L = normalize(LightDir.xyz);           
-    float3 V = normalize(-WorldSpaceRayDir);      
-    float3 N = SurfaceNormal;                     
-    float3 H = normalize(L + V);                  
+    // ==========================================================
+// --- 4. 材质参数化 (根据 ID 配置物理属性) ---
+// ==========================================================
 
-    // B. 次表面散射 (SSS)
-    float wrap = 0.5; 
-    float NdotL = dot(N, L);
-    float NdotL_SSS = saturate((NdotL + wrap) / (1.0 + wrap));
-    float3 SSSColor = BaseColor.xyz * float3(1.0, 0.8, 0.7); 
-    float3 Diffuse = SSSColor * NdotL_SSS;
+// 1. 初始化默认参数 (作为 Fallback)
+float3 Mat_BaseColor = BaseColor.rgb; 
+float Mat_Roughness = 0.4;
+float Mat_SpecIntensity = 1.0;
+float Mat_SSS_Strength = 0.0; 
+float Mat_Reflection = 0.0;   
+float Mat_Metalness = 0.0;    
 
-    // C. 菲涅尔 (Fresnel)
-    float3 F0 = float3(0.05, 0.05, 0.05); 
-    float NdotV = max(0.0, dot(N, V));
-    float3 F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+// 2. 根据 ID 覆写参数
+if (MatID == 0) // Enamel (牙釉质) - 半透明、光滑、类似陶瓷/玻璃
+{ 
+    // 牙釉质通常是乳白色或略带蓝/灰的透明感
+    Mat_BaseColor = float3(0.9, 0.9, 0.88); 
+    Mat_Roughness = 0.15; // 非常光滑，有湿润感
+    Mat_SpecIntensity = 1.0;
+    Mat_SSS_Strength = 0.4; // 适度的透光
+    Mat_Reflection = 0.2;   // 牙釉质表面有微弱的环境反射
+}
+else if (MatID == 1) // Dentin (牙本质) - 不透明、偏黄、有机质感
+{         
+    // 牙本质位于釉质下方，通常呈淡黄色/骨色
+    Mat_BaseColor = float3(0.85, 0.75, 0.55); 
+    Mat_Roughness = 0.5;  // 相对粗糙，没有釉质那么亮
+    Mat_SpecIntensity = 0.4;
+    Mat_SSS_Strength = 1.0; // 强烈的次表面散射，产生温暖的辉光
+}
+else if (MatID == 2) // Caries (龋坏) - 黑色/深褐色、粗糙、无光泽
+{
+    // 腐坏组织吸收光线，表面凹凸不平
+    Mat_BaseColor = float3(0.15, 0.1, 0.05); // 深褐色/黑色
+    Mat_Roughness = 0.9;  // 极度粗糙，几乎无高光
+    Mat_SpecIntensity = 0.1;
+    Mat_SSS_Strength = 0.0; // 坏死组织不透光
+}
+else if (MatID == 3) // Fill (金属填充物) - 银汞合金/金
+{
+    // 金属特性：BaseColor决定反射色，无Diffuse
+    Mat_BaseColor = float3(0.7, 0.7, 0.75); // 银灰色
+    Mat_Roughness = 0.2; // 抛光金属
+    Mat_SpecIntensity = 1.0;
+    Mat_Reflection = 1.0; // 强环境反射
+    Mat_Metalness = 1.0;  // 开启金属流程
+}
 
-    // D. 双层高光
-    float RoughnessInner = 0.4;
-    float SpecPowerInner = 2.0 / (RoughnessInner * RoughnessInner) - 2.0;
-    float NdotH = max(0.0, dot(N, H));
-    float SpecInnerTerm = pow(NdotH, SpecPowerInner) * 0.5;
+// ==========================================================
+// --- 5. 统一光照计算 (使用 Mat_ 变量) ---
+// ==========================================================
 
-    float RoughnessOuter = 0.05; 
-    float SpecPowerOuter = 2.0 / (RoughnessOuter * RoughnessOuter) - 2.0;
-    float SpecOuterTerm = pow(NdotH, SpecPowerOuter) * 2.0; 
+float3 L = normalize(LightDir.xyz);           
+float3 V = normalize(-WorldSpaceRayDir);      
+float3 N = SurfaceNormal;                     
+float3 H = normalize(L + V);                  
 
-    float3 SpecularFinal = (SpecInnerTerm + SpecOuterTerm) * SpecularColor.xyz * F * SpecularIntensity;
+float NdotL = saturate(dot(N, L));
+float NdotV = max(0.0, dot(N, V));
+float NdotH = max(0.0, dot(N, H));
 
-    // E. 边缘光
-    float RimExp = 4.0;
-    float RimTerm = pow(1.0 - NdotV, RimExp) * RimBoost;
-    float3 RimColorFinal = RimColor * RimTerm * 0.5; 
+// --- A. 漫反射 (Diffuse) & SSS ---
+// 金属没有漫反射，非金属有
+// 牙齿使用 SSS 替代简单的 Lambert Diffuse
+float wrap = 0.5; 
+float NdotL_SSS = saturate((dot(N, L) + wrap) / (1.0 + wrap));
 
-    // --- F. 环境反射 (Cubemap Reflection) ---
-    // 计算反射向量
-    float3 R = reflect(-V, N);
+// SSS 颜色倾向：牙齿透光通常偏暖色 (红/橙)
+float3 SSS_Tint = float3(1.0, 0.8, 0.7); 
+float3 DiffuseColor = Mat_BaseColor * SSS_Tint * NdotL_SSS * Mat_SSS_Strength;
 
-    float3 EnvColor = TextureCubeSample(EnvMap, EnvMapSampler, R).rgb;
+// 标准 Diffuse (用于不透光部分或低 SSS 部分)
+float3 LambertDiffuse = Mat_BaseColor * NdotL;
 
-    // 混合反射：
-    // 1. 使用菲涅尔项 F：边缘反射强，中心反射弱 (符合物理规律)
-    // 2. 乘以 ReflectionIntensity 用于美术控制
-    float3 ReflectionFinal = EnvColor * F * ReflectionIntensity;
+// 混合 SSS 和 标准 Diffuse，并根据金属度屏蔽
+// 如果 Metalness 为 1，Diffuse 变为 0
+float3 FinalDiffuse = lerp(lerp(LambertDiffuse, DiffuseColor, Mat_SSS_Strength), float3(0,0,0), Mat_Metalness);
 
-    // --- 最终合成 ---
-    SurfaceColor = (AmbientColor.xyz * 0.5) + Diffuse + SpecularFinal + RimColorFinal + ReflectionFinal;
 
-    return float4(SurfaceColor, 1.0);
+// --- B. 菲涅尔 (Fresnel F0) ---
+// 关键：绝缘体(牙齿) F0 固定为 0.04-0.05，金属使用 BaseColor
+float3 F0 = lerp(float3(0.05, 0.05, 0.05), Mat_BaseColor, Mat_Metalness);
+float3 F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+
+
+// --- C. 高光 (Specular) ---
+// 使用 Mat_Roughness 控制高光锐度
+// 牙齿通常有双层高光(口水层+牙体)，这里为了统一，使用基于 Roughness 的计算
+float SpecPower = 2.0 / (Mat_Roughness * Mat_Roughness + 0.001) - 2.0;
+float SpecTerm = pow(NdotH, SpecPower);
+
+// 金属的高光通常带有自身颜色(F)，非金属高光是白色的(但在PBR中通常由F项处理颜色)
+// 这里简单处理：乘以 SpecularColor 和 F
+float3 SpecularFinal = SpecTerm * SpecularColor.rgb * Mat_SpecIntensity * F;
+
+
+// --- D. 边缘光 (Rim) ---
+// 仅对非金属(牙齿)生效，增强体积感
+float RimExp = 4.0;
+float RimTerm = pow(1.0 - NdotV, RimExp) * RimBoost;
+float3 RimColorFinal = RimColor * RimTerm * (1.0 - Mat_Metalness); 
+
+
+// --- E. 环境反射 (Reflection) ---
+float3 R = reflect(-V, N);
+float3 EnvColor = TextureCubeSample(EnvMap, EnvMapSampler, R).rgb;
+
+// 混合反射：金属反射强，牙釉质反射弱
+// 使用 Mat_Reflection 控制强度，F 控制菲涅尔现象
+float3 ReflectionFinal = EnvColor * F * (Mat_Reflection * ReflectionIntensity);
+
+
+// --- 最终合成 ---
+SurfaceColor = (AmbientColor.xyz * 0.3) + FinalDiffuse + SpecularFinal + RimColorFinal + ReflectionFinal;
+
+return float4(SurfaceColor, 1.0);
 }
 else {
     return float4(0,0,0,0);
