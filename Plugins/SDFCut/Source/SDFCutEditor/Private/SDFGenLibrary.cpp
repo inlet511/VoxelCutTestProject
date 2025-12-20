@@ -138,6 +138,7 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
     NewTexture->SRGB = false;
     NewTexture->CompressionSettings = TC_HDR; // 高精度
     NewTexture->MipGenSettings = TMGS_NoMipmaps; // 通常SDF不需要Mipmap，或者根据需求开启
+    NewTexture->Filter = TF_Trilinear;
 
     // 6. 填充纹理数据
     // -----------------------------------------------------------------------
@@ -255,14 +256,14 @@ UVolumeTexture* USDFGenLibrary::GenerateSDFFromStaticMesh(UStaticMesh* InputMesh
 }
 void USDFGenLibrary::BakeBrushToVolume(UObject* WorldContextObject, UVolumeTexture* TargetTexture, AActor* VolumeActor, AActor* BrushActor, int32 MaterialID, bool bErase)
 {
-if (!TargetTexture || !VolumeActor || !BrushActor) return;
+    if (!TargetTexture || !VolumeActor || !BrushActor) return;
     UWorld* World = WorldContextObject->GetWorld();
     if (!World) return;
 
     UStaticMeshComponent* VolMeshComp = VolumeActor->FindComponentByClass<UStaticMeshComponent>();
     if (!VolMeshComp || !VolMeshComp->GetStaticMesh()) return;
 
-    // --- 准备空间数据 ---
+    // --- 1. 准备空间数据 ---
     FBox MeshLocalBounds = VolMeshComp->GetStaticMesh()->GetBoundingBox();
     FVector LocalMin = MeshLocalBounds.Min;
     FVector LocalSize = MeshLocalBounds.GetSize();
@@ -272,7 +273,7 @@ if (!TargetTexture || !VolumeActor || !BrushActor) return;
     LocalSize.Z = FMath::Max(LocalSize.Z, 1.0f);
 
     FTransform VolLocalToWorld = VolMeshComp->GetComponentTransform();
-    FTransform VolWorldToLocal = VolLocalToWorld.Inverse(); // 修正：之前这里可能写反了，这里确保逻辑正确
+    FTransform VolWorldToLocal = VolLocalToWorld.Inverse();
     
     FBox BrushWorldBox = BrushActor->GetComponentsBoundingBox();
     FBox BrushLocalBox = BrushWorldBox.TransformBy(VolWorldToLocal);
@@ -291,17 +292,25 @@ if (!TargetTexture || !VolumeActor || !BrushActor) return;
     int32 StartZ = FMath::Clamp(FMath::FloorToInt(UVMin.Z * SizeZ), 0, SizeZ - 1);
     int32 EndZ   = FMath::Clamp(FMath::CeilToInt(UVMax.Z * SizeZ), 0, SizeZ - 1);
 
-    UE_LOG(LogTemp, Warning, TEXT("[BakeBrush] 范围: X[%d-%d] Y[%d-%d] Z[%d-%d]"), StartX, EndX, StartY, EndY, StartZ, EndZ);
-
     if (StartX > EndX || StartY > EndY || StartZ > EndZ) return;
 
-    // --- 锁定内存 ---
+    // --- 2. 计算平滑参数 ---
+    // 计算一个体素在世界空间中的平均大小
+    FVector VoxelSizeWorldVec = VolLocalToWorld.TransformVector(LocalSize / FVector(SizeX, SizeY, SizeZ));
+    float AvgVoxelSize = VoxelSizeWorldVec.GetAbs().GetMax(); 
+
+    // **柔和半径**：设定边缘过渡带的宽度。
+    // 1.5 * AvgVoxelSize 意味着边缘会有大约 1.5 个体素宽度的渐变区域。
+    // 数值越大越模糊，数值越小越锐利。
+    float SmoothWorldRadius = AvgVoxelSize * 1.5f; 
+
+    // --- 3. 锁定内存 ---
     FFloat16Color* MipDataF16 = (FFloat16Color*)TargetTexture->Source.LockMip(0);
     if (!MipDataF16) return;
 
     FThreadSafeCounter TotalWritesCounter;
 
-    // --- 并行计算 ---
+    // --- 4. 并行计算 ---
     int32 NumZSlices = EndZ - StartZ + 1;
 
     ParallelFor(NumZSlices, [&](int32 LoopIndex)
@@ -312,32 +321,62 @@ if (!TargetTexture || !VolumeActor || !BrushActor) return;
         QueryParams.bTraceComplex = true; 
         QueryParams.AddIgnoredActor(VolumeActor); 
         
+        // 线程局部变量，避免反复分配内存
         TArray<FHitResult> HitsPos;
         TArray<FHitResult> HitsNeg;
-        HitsPos.Reserve(4);
-        HitsNeg.Reserve(4);
+        HitsPos.Reserve(8);
+        HitsNeg.Reserve(8);
 
-        // 检测函数：从外部向内部 (Inbound Ray)
-        auto CheckAxisInbound = [&](const FVector& TargetPos, const FVector& Direction) -> bool
+        // 修改后的检测函数：不仅返回是否在内部，还计算最近表面的距离
+        auto CheckAxisAndGetDist = [&](const FVector& TargetPos, const FVector& Direction, float& OutCurrentMinDist) -> bool
         {
             HitsPos.Reset();
             HitsNeg.Reset();
 
+            // 射线长度给足
             FVector StartPos = TargetPos + (Direction * 100000.0f);
             FVector StartNeg = TargetPos - (Direction * 100000.0f);
 
-            // 射线从无穷远射向体素中心
             World->LineTraceMultiByChannel(HitsPos, StartPos, TargetPos, ECC_Visibility, QueryParams);
             World->LineTraceMultiByChannel(HitsNeg, StartNeg, TargetPos, ECC_Visibility, QueryParams);
 
             int32 CountPos = 0;
-            for (const FHitResult& Hit : HitsPos) { if (Hit.GetActor() == BrushActor) CountPos++; }
+            float LocalMinDist = FLT_MAX; // 本次轴向检测到的最近距离
+
+            for (const FHitResult& Hit : HitsPos) 
+            { 
+                if (Hit.GetActor() == BrushActor) 
+                {
+                    CountPos++;
+                    // 计算命中点到体素中心的距离
+                    float Dist = FVector::Dist(Hit.ImpactPoint, TargetPos);
+                    if (Dist < LocalMinDist) LocalMinDist = Dist;
+                }
+            }
 
             int32 CountNeg = 0;
-            for (const FHitResult& Hit : HitsNeg) { if (Hit.GetActor() == BrushActor) CountNeg++; }
+            for (const FHitResult& Hit : HitsNeg) 
+            { 
+                if (Hit.GetActor() == BrushActor) 
+                {
+                    CountNeg++;
+                    float Dist = FVector::Dist(Hit.ImpactPoint, TargetPos);
+                    if (Dist < LocalMinDist) LocalMinDist = Dist;
+                }
+            }
 
-            // 必须两边都穿透了奇数次 (说明被夹在中间)
-            return (CountPos % 2 != 0) && (CountNeg % 2 != 0);
+            bool bInside = (CountPos % 2 != 0) && (CountNeg % 2 != 0);
+            
+            // 如果判定在内部，我们将这个轴向发现的最近距离贡献给全局最小值
+            if (bInside)
+            {
+                if (LocalMinDist < OutCurrentMinDist)
+                {
+                    OutCurrentMinDist = LocalMinDist;
+                }
+            }
+
+            return bInside;
         };
 
         for (int y = StartY; y <= EndY; y++)
@@ -349,18 +388,35 @@ if (!TargetTexture || !VolumeActor || !BrushActor) return;
                 FVector VoxelWorldPos = VolLocalToWorld.TransformPosition(LocalPos);
 
                 int32 PassCount = 0;
+                float MinDistToSurface = FLT_MAX; // 记录该体素中心离最近表面的距离
 
-                // 分别检测3个轴，不再一票否决
-                if (CheckAxisInbound(VoxelWorldPos, FVector(0, 0, 1))) PassCount++; // Z
-                if (CheckAxisInbound(VoxelWorldPos, FVector(1, 0, 0))) PassCount++; // X
-                if (CheckAxisInbound(VoxelWorldPos, FVector(0, 1, 0))) PassCount++; // Y
+                // 分别检测3个轴，并更新 MinDistToSurface
+                if (CheckAxisAndGetDist(VoxelWorldPos, FVector(0, 0, 1), MinDistToSurface)) PassCount++;
+                if (CheckAxisAndGetDist(VoxelWorldPos, FVector(1, 0, 0), MinDistToSurface)) PassCount++;
+                if (CheckAxisAndGetDist(VoxelWorldPos, FVector(0, 1, 0), MinDistToSurface)) PassCount++;
 
-                // 只要有任意一个轴判定我们在内部，就认为是内部
-                // (解决了 Z 轴可能因为极点/接缝问题导致判定失败的情况)
+                // 只要判定为内部 (PassCount >= 1 是为了容错，严格来说应该是 3)
                 if (PassCount >= 1)
                 {
                     int32 Index = z * SizeX * SizeY + y * SizeX + x;
-                    MipDataF16[Index].G = FFloat16(bErase ? 0.0f : (float)MaterialID);
+                    
+                    // --- 核心平滑逻辑 ---
+                    
+                    // 1. 计算归一化距离 (0.0 = 在表面, 1.0 = 在深处)
+                    // 防止 MinDistToSurface 还是 FLT_MAX (极少数情况)
+                    float SafeDist = (MinDistToSurface == FLT_MAX) ? 0.0f : MinDistToSurface;
+                    float Alpha = FMath::Clamp(SafeDist / SmoothWorldRadius, 0.0f, 1.0f);
+
+                    // 2. 使用平滑阶梯函数 (SmoothStep) 让线性过渡变得更自然
+                    // 公式: x * x * (3 - 2 * x)
+                    Alpha = Alpha * Alpha * (3.0f - 2.0f * Alpha);
+
+                    // 3. 计算最终值
+                    // 既然Shader支持，我们输出 MaterialID * Alpha
+                    // 例如 ID=2, Alpha=0.5 -> 输出 1.0
+                    float FinalValue = (float)MaterialID * Alpha;
+
+                    MipDataF16[Index].G = FFloat16(bErase ? 0.0f : FinalValue);
                     TotalWritesCounter.Increment();
                 }
             }
@@ -371,14 +427,7 @@ if (!TargetTexture || !VolumeActor || !BrushActor) return;
     TargetTexture->UpdateResource();
     TargetTexture->MarkPackageDirty();
 
-    if (TotalWritesCounter.GetValue() == 0)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[BakeBrush] 写入仍为 0。请确认 BrushActor 的 Collision Presets 是 BlockAll 且 ComplexAsSimple 已开启。"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Log, TEXT("[BakeBrush] 成功！写入体素数量: %d"), TotalWritesCounter.GetValue());
-    }
+    UE_LOG(LogTemp, Log, TEXT("[BakeBrush] 完成。写入体素: %d, 平滑半径: %.2f"), TotalWritesCounter.GetValue(), SmoothWorldRadius);
 }
 
 
