@@ -79,7 +79,7 @@ void UGPUSDFCutter::InitResources()
 	CurrentToolTransform = CutToolActor->GetTransform();
 
 	// 创建VolumeRT
-	VolumeRT = UKismetRenderingLibrary::CreateRenderTargetVolume(this, SDFDimensions.X, SDFDimensions.Y, SDFDimensions.Z, RTF_R32f, FLinearColor::Black, false, true);
+	VolumeRT = UKismetRenderingLibrary::CreateRenderTargetVolume(this, SDFDimensions.X, SDFDimensions.Y, SDFDimensions.Z, RTF_RGBA16f, FLinearColor::Black, false, true);
     VolumeRT->bCanCreateUAV = true;
 
 	// 创建SDF渲染材质实例
@@ -142,12 +142,13 @@ void UGPUSDFCutter::UpdateTargetTransform()
 	}
 }
 
-bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFValue, FVector& OutNormal)
+bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFValue, FVector& OutNormal,int32& OutMaterialID)
 {
 	if (CPU_SDFData.Num() == 0 || !TargetMeshActor)
 	{
 		OutSDFValue = 0.0f;
 		OutNormal = FVector::UpVector;
+		OutMaterialID = -1;//无效ID
 		return false;
 	}
 
@@ -157,6 +158,7 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	{
 		OutSDFValue = 0.0f;
 		OutNormal = FVector::UpVector;
+		OutMaterialID = -1;
 		return false;
 	}
 
@@ -171,6 +173,7 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	{
 		OutSDFValue = TNumericLimits<float>::Max();
 		OutNormal = (WorldLocation - TargetMeshActor->GetActorLocation()).GetSafeNormal();
+		OutMaterialID = -1; // 无效 ID
 		return false;
 	}
 
@@ -180,6 +183,12 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 
 	// Sample SDF value (trilinear)
 	OutSDFValue = SampleSDFTrilinear(VoxelCoord);
+	
+	// 读取材质 ID（G 通道）
+	int32 VoxelIndex = GetVoxelIndex(FMath::FloorToInt(VoxelCoord.X), FMath::FloorToInt(VoxelCoord.Y), FMath::FloorToInt(VoxelCoord.Z));
+	
+	float RawMaterialVal = CPU_SDFData[VoxelIndex].G.GetFloat();
+	OutMaterialID = FMath::RoundToInt(RawMaterialVal); 
 
 	// Compute normal via central differences in voxel space
 	const float Epsilon = 1.0f; // in voxel units
@@ -203,7 +212,7 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	return true;
 }
 
-float UGPUSDFCutter::CalculateCurrentVolume(bool bWorldSpace)
+float UGPUSDFCutter::CalculateCurrentVolume(int32 MaterialID, bool bWorldSpace)
 {
 	if (CPU_SDFData.Num() == 0 || !TargetMeshActor)
 	{
@@ -222,10 +231,15 @@ float UGPUSDFCutter::CalculateCurrentVolume(bool bWorldSpace)
 	// 并行遍历整个 SDF 数组
 	ParallelFor(CPU_SDFData.Num(), [&](int32 Index)
 	{
-		// 假设 SDF <= 0 表示物体内部 (这是标准惯例，如果你的Shader是反的，请改为 >= 0)
-		if (CPU_SDFData[Index] <= 0.0f)
+		
+		// 假设 SDF <= 0 表示物体内部 
+		if (CPU_SDFData[Index].R <= 0.0f )
 		{
-			InsideVoxelCount++;
+			int32 MaterialIDRead = FMath::RoundToInt(CPU_SDFData[Index].G.GetFloat());
+			if (MaterialIDRead == MaterialID)
+			{
+				++InsideVoxelCount;
+			}			
 		}
 	});
 
@@ -256,19 +270,20 @@ void UGPUSDFCutter::InitCPUData()
     {
         const void* RawData = PlatformData->Mips[0].BulkData.LockReadOnly();
 
-        // Assuming the source format is R32 Float
-        FMemory::Memcpy(CPU_SDFData.GetData(), RawData, CPU_SDFData.Num() * sizeof(float));
+        // Assuming the source format is FFloat16Color Float
+    	const FFloat16Color* SourceData = static_cast<const FFloat16Color*>(RawData);
+        FMemory::Memcpy(CPU_SDFData.GetData(), SourceData, CPU_SDFData.Num() * sizeof(FFloat16Color));
 
         PlatformData->Mips[0].BulkData.Unlock();
     }
     else
     {
         // If no valid data, initialize to zero
-        FMemory::Memzero(CPU_SDFData.GetData(), CPU_SDFData.Num() * sizeof(float));
+        FMemory::Memzero(CPU_SDFData.GetData(), CPU_SDFData.Num() * sizeof(FFloat16Color));
     }
 }
 
-void UGPUSDFCutter::UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector UpdateSize, TArray<float>& LocalData)
+void UGPUSDFCutter::UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector UpdateSize, TArray<FFloat16Color>& LocalData)
 {
 	// 校验数据大小是否匹配
 	int32 ExpectedSize = UpdateSize.X * UpdateSize.Y * UpdateSize.Z;
@@ -309,7 +324,7 @@ void UGPUSDFCutter::UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector Update
 				FMemory::Memcpy(
 					&CPU_SDFData[GlobalStartIndex], 
 					&LocalData[LocalIndex], 
-					CopyCount * sizeof(float)
+					CopyCount * sizeof(FFloat16Color)
 				);
 			}
 
@@ -337,15 +352,15 @@ float UGPUSDFCutter::SampleSDFTrilinear(const FVector& VoxelCoord) const
 	float Gamma = VoxelCoord.Z - Z0;
 
 	// 采样8个角点
-	float C000 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z0)];
-	float C100 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z0)];
-	float C010 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z0)];
-	float C110 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z0)];
-    
-	float C001 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z1)];
-	float C101 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z1)];
-	float C011 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z1)];
-	float C111 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z1)];
+	float C000 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z0)].R.GetFloat();
+	float C100 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z0)].R.GetFloat();
+	float C010 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z0)].R.GetFloat();
+	float C110 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z0)].R.GetFloat();
+  
+	float C001 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z1)].R.GetFloat();
+	float C101 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z1)].R.GetFloat();
+	float C011 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z1)].R.GetFloat();
+	float C111 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z1)].R.GetFloat();
 
 	// X轴插值
 	float C00 = FMath::Lerp(C000, C100, Alpha);
@@ -541,13 +556,13 @@ void UGPUSDFCutter::DispatchLocalUpdate()
             RHICmdList.Read3DSurfaceFloatData(StagingRHI, FIntRect(0, 0, RegionSize.X, RegionSize.Y), FIntPoint(0, RegionSize.Z), TempPixels);
 
         	// 3. 转换为 float 数组
-			TArray<float> LocalFloatPixels;
+			TArray<FFloat16Color> LocalFloatPixels;
 			LocalFloatPixels.SetNumUninitialized(TempPixels.Num());
         	
         	// 并行转换数据 (SDF通常存储在R通道)
         	ParallelFor(TempPixels.Num(), [&](int32 i)
 			{
-				LocalFloatPixels[i] = TempPixels[i].R.GetFloat();
+				LocalFloatPixels[i] = TempPixels[i];
 			}, EParallelForFlags::None);
         				
             // --- D. 返回 GameThread 更新数据 ---            

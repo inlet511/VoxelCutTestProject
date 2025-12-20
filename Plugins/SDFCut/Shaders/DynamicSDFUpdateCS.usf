@@ -2,11 +2,11 @@
 #include "/Engine/Public/Platform.ush"
 #include "/Engine/Private/Common.ush"
 
-Texture3D<float> InputSDF;
+Texture3D<float2> InputSDF;
 SamplerState InputSDFSampler;
-Texture3D<float> ToolSDF;
+Texture3D<float2> ToolSDF;
 SamplerState ToolSDFSampler;
-RWTexture3D<float> OutputSDF;
+RWTexture3D<float2> OutputSDF;
 
 // Uniform Buffer
 cbuffer CutUB
@@ -22,7 +22,7 @@ cbuffer CutUB
 };
 
 // 采样SDF纹理（将世界坐标转换为纹理UV）
-float SampleSDF(Texture3D<float> SDFTex, SamplerState Sampler, float3 Pos, float3 SDFBoundsMin, float3 SDFBoundsMax)
+float SampleSDF(Texture3D<float2> SDFTex, SamplerState Sampler, float3 Pos, float3 SDFBoundsMin, float3 SDFBoundsMax)
 {
     float3 UV = saturate((Pos - SDFBoundsMin) / (SDFBoundsMax - SDFBoundsMin));
     return SDFTex.SampleLevel(Sampler, UV, 0).r;
@@ -66,26 +66,25 @@ void LocalSDFUpdateKernel(uint3 DispatchThreadID : SV_DispatchThreadID)
     float3 TargetPosInLocalSpace = VoxelToObjectPos(GlobalVoxelID, SDFDimensions, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
     // 2. 采样原始物体SDF（直接在物体局部坐标系）
-    float OriginalSDFValue = SampleSDF(InputSDF, InputSDFSampler,TargetPosInLocalSpace, TargetLocalBoundsMin, TargetLocalBoundsMax);
+    float2 OriginalValue = SampleSDF(InputSDF, InputSDFSampler,TargetPosInLocalSpace, TargetLocalBoundsMin, TargetLocalBoundsMax);
     
     // 3. 将物体局部坐标转换到刀具局部坐标系
     float4 ToolSpacePos4 = mul(float4(TargetPosInLocalSpace, 1.0), TargetToToolTransform);
     float3 ToolSpacePos = ToolSpacePos4.xyz / ToolSpacePos4.w;
     
     
-    float ResultValue = OriginalSDFValue;
+    float2 ResultValue = OriginalValue;
     
     // 4. 检查是否在工具边界内（快速剔除）
     if (IsInToolLocalBounds(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax))
     {       
         // 5. 采样工具SDF（工具局部坐标系）
         float3 ToolUV = GetToolUV(ToolSpacePos, ToolLocalBoundsMin, ToolLocalBoundsMax);
-        float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0);
+        float ToolSDFValue = ToolSDF.SampleLevel(ToolSDFSampler, ToolUV, 0).r;
 
         // 平滑切削
-        ResultValue = max(OriginalSDFValue, -ToolSDFValue);
+        ResultValue.x = max(OriginalValue.x, -ToolSDFValue);
     }
-
     // 7. 写入结果
     OutputSDF[GlobalVoxelID] = ResultValue;
 }

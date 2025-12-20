@@ -12,6 +12,14 @@
 class UVolumeTexture;
 class AStaticMeshActor;
 
+// 牙齿材质类型
+enum EVolumeMaterial
+{
+	Enamel=0, // 牙釉质
+	Dentin=1, // 牙本质
+	Fill=2   // 填充物
+};
+
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class SDFCUT_API UGPUSDFCutter : public USceneComponent
 {
@@ -34,10 +42,10 @@ public:
 	void UpdateTargetTransform();
 	
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
-	bool GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFValue, FVector& OutNormal);
+	bool GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFValue, FVector& OutNormal, int32& OutMaterialID);
 
 	UFUNCTION(BlueprintCallable, Category = "SDF")
-	float CalculateCurrentVolume(bool bWorldSpace = true);
+	float CalculateCurrentVolume(int32 MaterialID, bool bWorldSpace = true);
 	
 	// SDF纹理（CPU端引用）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
@@ -107,7 +115,7 @@ private:
 	// 初始化CPU端缓存
 	void InitCPUData();
     
-	void UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector UpdateSize, TArray<float>& LocalData);
+	void UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector UpdateSize, TArray<FFloat16Color>& LocalData);
 
 	// 辅助：三线性插值采样
 	float SampleSDFTrilinear(const FVector& VoxelCoord) const;
@@ -115,7 +123,7 @@ private:
 	int32 GetVoxelIndex(int32 X, int32 Y, int32 Z) const;
 
 	// CPU端缓存的SDF数据 (线性数组: Z * Y * X)
-	TArray<float> CPU_SDFData;
+	TArray<FFloat16Color> CPU_SDFData;
     
 	// 标记是否正在回读，防止重入
 	bool bIsReadingBack = false;
