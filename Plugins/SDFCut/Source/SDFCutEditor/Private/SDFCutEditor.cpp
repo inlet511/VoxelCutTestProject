@@ -14,4 +14,4 @@ void FSDFCutEditorModule::ShutdownModule()
 
 #undef LOCTEXT_NAMESPACE
 	
-IMPLEMENT_MODULE(FSDFCutEditorModule, SDFCut)
+IMPLEMENT_MODULE(FSDFCutEditorModule, SDFCutEditor)

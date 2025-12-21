@@ -3,9 +3,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DynamicMeshActor.h"
+#include "SDFVolumeProvider.h"
 #include "Components/SceneComponent.h"
 #include "Engine/TextureRenderTargetVolume.h"
+#include "SDFVolumeProvider.h"
 #include "GPUSDFCutter.generated.h"
 
 
@@ -22,7 +23,7 @@ enum EVolumeMaterial
 };
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
-class SDFCUT_API UGPUSDFCutter : public USceneComponent
+class SDFCUT_API UGPUSDFCutter : public USceneComponent, public ISDFVolumeProvider
 {
 	GENERATED_BODY()
 
@@ -71,9 +72,29 @@ public:
 	UPROPERTY()
 	UMaterialInstanceDynamic* SDFMaterialInstanceDynamic;
 
+
+	// --- ISDFVolumeProvider 实现 ---
+	virtual bool WorldToVoxelSpace(const FVector& WorldLocation, FVector& OutVoxelCoord) const override;
+	virtual float SampleSDF(const FVector& VoxelCoord) const override; // 包装原有的 SampleSDFTrilinear
+	virtual int32 SampleMaterialID(const FVector& VoxelCoord) const override;
+	virtual float GetVoxelSize() const override { return VoxelSize; }
+	virtual FRWLock& GetDataLock() override { return DataRWLock; }
+private:
+	// 读写锁，防止切削回读时，Haptics正在读取导致崩溃
+	FRWLock DataRWLock; 
+	
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
+	
+
+	// 触觉参数
+	float ProbeStiffness = 1000.0f; // 基础刚度 N/cm
+	float ProbeDamping = 5.0f;      // 阻尼（可选，需要上一帧速度）
+	
+
+	// 辅助：快速计算梯度的函数（比通用的GetSDFValueAndNormal更快，去掉了边界检查等）
+	FVector CalculateGradientAtVoxel(const FVector& VoxelCoord) const;
 
 public:
 	// Called every frame
@@ -117,9 +138,7 @@ private:
 	void InitCPUData();
     
 	void UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector UpdateSize, TArray<FFloat16Color>& LocalData);
-
-	// 辅助：三线性插值采样
-	float SampleSDFTrilinear(const FVector& VoxelCoord) const;
+	
 	// 辅助：获取体素索引
 	int32 GetVoxelIndex(int32 X, int32 Y, int32 Z) const;
 

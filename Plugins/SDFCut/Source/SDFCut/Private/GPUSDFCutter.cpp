@@ -25,6 +25,111 @@ UGPUSDFCutter::UGPUSDFCutter()
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
 }
 
+bool UGPUSDFCutter::WorldToVoxelSpace(const FVector& WorldLocation, FVector& OutVoxelCoord) const
+{
+	if (!TargetMeshActor)
+	{
+		return false;
+	}
+
+	// 1. 世界空间 -> 局部空间
+	// 使用 Actor 的变换矩阵将世界坐标转为局部坐标
+	FVector LocalPos = TargetMeshActor->GetActorTransform().InverseTransformPosition(WorldLocation);
+
+	// 2. 边界检查 (Broad Phase)
+	// 如果点在模型的局部包围盒之外，直接认为无效
+	// TargetLocalBounds 是在 InitResources 中计算的
+	if (!TargetLocalBounds.IsInside(LocalPos))
+	{
+		return false;
+	}
+
+	// 3. 局部空间 -> 体素空间
+	// 相对坐标 = 当前点 - 包围盒最小点
+	FVector RelativePos = LocalPos - TargetLocalBounds.Min;
+
+	// 体素坐标 = 相对坐标 / 单个体素大小
+	OutVoxelCoord = RelativePos / VoxelSize;
+
+	// 4. 安全性检查 (防止浮点误差导致越界)
+	// 虽然 IsInside 已经检查过了，但为了保险起见，确保坐标在 [0, Dimensions] 之间
+	if (OutVoxelCoord.X < 0.0f || OutVoxelCoord.X > (float)SDFDimensions.X ||
+		OutVoxelCoord.Y < 0.0f || OutVoxelCoord.Y > (float)SDFDimensions.Y ||
+		OutVoxelCoord.Z < 0.0f || OutVoxelCoord.Z > (float)SDFDimensions.Z)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+float UGPUSDFCutter::SampleSDF(const FVector& VoxelCoord) const
+{
+	// 基础体素坐标（左下后）
+	int32 X0 = FMath::FloorToInt(VoxelCoord.X);
+	int32 Y0 = FMath::FloorToInt(VoxelCoord.Y);
+	int32 Z0 = FMath::FloorToInt(VoxelCoord.Z);
+
+	int32 X1 = X0 + 1;
+	int32 Y1 = Y0 + 1;
+	int32 Z1 = Z0 + 1;
+
+	// 插值权重
+	float Alpha = VoxelCoord.X - X0;
+	float Beta  = VoxelCoord.Y - Y0;
+	float Gamma = VoxelCoord.Z - Z0;
+
+	// 采样8个角点
+	float C000 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z0)].R.GetFloat();
+	float C100 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z0)].R.GetFloat();
+	float C010 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z0)].R.GetFloat();
+	float C110 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z0)].R.GetFloat();
+  
+	float C001 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z1)].R.GetFloat();
+	float C101 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z1)].R.GetFloat();
+	float C011 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z1)].R.GetFloat();
+	float C111 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z1)].R.GetFloat();
+
+	// X轴插值
+	float C00 = FMath::Lerp(C000, C100, Alpha);
+	float C10 = FMath::Lerp(C010, C110, Alpha);
+	float C01 = FMath::Lerp(C001, C101, Alpha);
+	float C11 = FMath::Lerp(C011, C111, Alpha);
+
+	// Y轴插值
+	float C0 = FMath::Lerp(C00, C10, Beta);
+	float C1 = FMath::Lerp(C01, C11, Beta);
+
+	// Z轴插值
+	return FMath::Lerp(C0, C1, Gamma);
+}
+
+int32 UGPUSDFCutter::SampleMaterialID(const FVector& VoxelCoord) const
+{
+	// 如果数据未初始化，返回默认ID (例如 0)
+	if (CPU_SDFData.Num() == 0)
+	{
+		return 0;
+	}
+	// 1. 最近邻采样 (Nearest Neighbor)
+	// 材质ID是整数，不能插值。直接四舍五入找到最近的体素中心。
+	int32 X = FMath::RoundToInt(VoxelCoord.X);
+	int32 Y = FMath::RoundToInt(VoxelCoord.Y);
+	int32 Z = FMath::RoundToInt(VoxelCoord.Z);
+
+	// 2. 获取数组索引 (复用现有的 GetVoxelIndex 函数，它内部包含了 Clamp 逻辑)
+	int32 Index = GetVoxelIndex(X, Y, Z);
+
+	// 3. 读取数据
+	if (CPU_SDFData.IsValidIndex(Index))
+	{
+		// G 通道存储材质 ID (float -> int)
+		return FMath::RoundToInt(CPU_SDFData[Index].G.GetFloat());
+	}
+
+	return 0; // Fallback
+}
+
 void UGPUSDFCutter::BeginPlay()
 {
 	Super::BeginPlay();
@@ -35,6 +140,20 @@ void UGPUSDFCutter::BeginPlay()
 	}
 }
 
+FVector UGPUSDFCutter::CalculateGradientAtVoxel(const FVector& VoxelCoord) const
+{
+	// 步长：1个体素
+	const float E = 1.0f; 
+    
+	// 这里为了速度，假设 SampleSDFTrilinear 内部已经处理了 Clamp
+	// 如果没有，必须在这里处理，否则数组越界会 Crash
+    
+	float Dx = SampleSDF(VoxelCoord + FVector(E, 0, 0)) - SampleSDF(VoxelCoord - FVector(E, 0, 0));
+	float Dy = SampleSDF(VoxelCoord + FVector(0, E, 0)) - SampleSDF(VoxelCoord - FVector(0, E, 0));
+	float Dz = SampleSDF(VoxelCoord + FVector(0, 0, E)) - SampleSDF(VoxelCoord - FVector(0, 0, E));
+
+	return FVector(Dx, Dy, Dz); // 不需要归一化，外面会做
+}
 
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
@@ -51,7 +170,6 @@ void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorCo
 		bRelativeTransformDirty = false;
 	}
 }
-
 
 void UGPUSDFCutter::InitResources()
 {
@@ -100,7 +218,6 @@ void UGPUSDFCutter::InitResources()
 	// 刚刚创建的资源，获取资源对象的指针（CPU端的FTextureResource指针是立即有效的， RHI则不一定）
 	FTextureResource* DestVolumeResource = VolumeRT->GetResource();
 
-
 	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this, OriginalTextureRHI = OriginalSDFRHIRef, DestVolumeResource](FRHICommandListImmediate& RHICmdList)
 	{
 		FRDGBuilder GraphBuilder(RHICmdList);
@@ -120,7 +237,6 @@ void UGPUSDFCutter::InitResources()
 
 	bGPUResourcesInitialized = true;
 }
-
 
 void UGPUSDFCutter::UpdateToolTransform()
 {
@@ -182,7 +298,7 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	FVector VoxelCoord = RelativePos / VoxelSize;
 
 	// Sample SDF value (trilinear)
-	OutSDFValue = SampleSDFTrilinear(VoxelCoord);
+	OutSDFValue = SampleSDF(VoxelCoord);
 	
 	// 读取材质 ID（G 通道）
 	int32 VoxelIndex = GetVoxelIndex(FMath::FloorToInt(VoxelCoord.X), FMath::FloorToInt(VoxelCoord.Y), FMath::FloorToInt(VoxelCoord.Z));
@@ -192,12 +308,12 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 
 	// Compute normal via central differences in voxel space
 	const float Epsilon = 1.0f; // in voxel units
-	float ValXPlus  = SampleSDFTrilinear(VoxelCoord + FVector(Epsilon, 0, 0));
-	float ValXMinus = SampleSDFTrilinear(VoxelCoord - FVector(Epsilon, 0, 0));
-	float ValYPlus  = SampleSDFTrilinear(VoxelCoord + FVector(0, Epsilon, 0));
-	float ValYMinus = SampleSDFTrilinear(VoxelCoord - FVector(0, Epsilon, 0));
-	float ValZPlus  = SampleSDFTrilinear(VoxelCoord + FVector(0, 0, Epsilon));
-	float ValZMinus = SampleSDFTrilinear(VoxelCoord - FVector(0, 0, Epsilon));
+	float ValXPlus  = SampleSDF(VoxelCoord + FVector(Epsilon, 0, 0));
+	float ValXMinus = SampleSDF(VoxelCoord - FVector(Epsilon, 0, 0));
+	float ValYPlus  = SampleSDF(VoxelCoord + FVector(0, Epsilon, 0));
+	float ValYMinus = SampleSDF(VoxelCoord - FVector(0, Epsilon, 0));
+	float ValZPlus  = SampleSDF(VoxelCoord + FVector(0, 0, Epsilon));
+	float ValZMinus = SampleSDF(VoxelCoord - FVector(0, 0, Epsilon));
 
 	FVector Gradient(
 		ValXPlus - ValXMinus,
@@ -334,48 +450,6 @@ void UGPUSDFCutter::UpdateCPUDataPartial(FIntVector UpdateMin, FIntVector Update
 	}
 }
 
-
-float UGPUSDFCutter::SampleSDFTrilinear(const FVector& VoxelCoord) const
-{
-	// 基础体素坐标（左下后）
-	int32 X0 = FMath::FloorToInt(VoxelCoord.X);
-	int32 Y0 = FMath::FloorToInt(VoxelCoord.Y);
-	int32 Z0 = FMath::FloorToInt(VoxelCoord.Z);
-
-	int32 X1 = X0 + 1;
-	int32 Y1 = Y0 + 1;
-	int32 Z1 = Z0 + 1;
-
-	// 插值权重
-	float Alpha = VoxelCoord.X - X0;
-	float Beta  = VoxelCoord.Y - Y0;
-	float Gamma = VoxelCoord.Z - Z0;
-
-	// 采样8个角点
-	float C000 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z0)].R.GetFloat();
-	float C100 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z0)].R.GetFloat();
-	float C010 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z0)].R.GetFloat();
-	float C110 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z0)].R.GetFloat();
-  
-	float C001 = CPU_SDFData[GetVoxelIndex(X0, Y0, Z1)].R.GetFloat();
-	float C101 = CPU_SDFData[GetVoxelIndex(X1, Y0, Z1)].R.GetFloat();
-	float C011 = CPU_SDFData[GetVoxelIndex(X0, Y1, Z1)].R.GetFloat();
-	float C111 = CPU_SDFData[GetVoxelIndex(X1, Y1, Z1)].R.GetFloat();
-
-	// X轴插值
-	float C00 = FMath::Lerp(C000, C100, Alpha);
-	float C10 = FMath::Lerp(C010, C110, Alpha);
-	float C01 = FMath::Lerp(C001, C101, Alpha);
-	float C11 = FMath::Lerp(C011, C111, Alpha);
-
-	// Y轴插值
-	float C0 = FMath::Lerp(C00, C10, Beta);
-	float C1 = FMath::Lerp(C01, C11, Beta);
-
-	// Z轴插值
-	return FMath::Lerp(C0, C1, Gamma);
-}
-
 int32 UGPUSDFCutter::GetVoxelIndex(int32 X, int32 Y, int32 Z) const
 {
 	// Clamp 坐标防止越界
@@ -384,7 +458,6 @@ int32 UGPUSDFCutter::GetVoxelIndex(int32 X, int32 Y, int32 Z) const
 	Z = FMath::Clamp(Z, 0, SDFDimensions.Z - 1);
 	return Z * (SDFDimensions.X * SDFDimensions.Y) + Y * SDFDimensions.X + X;
 }
-
 
 void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin,
                                                    FIntVector& OutVoxelMax)
@@ -431,7 +504,6 @@ void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransfo
 	OutVoxelMin = OutVoxelMin.ComponentMax(FIntVector(0, 0, 0)); // 下限不能是负数
 	OutVoxelMax = OutVoxelMax.ComponentMin(SDFDimensions); // 上限不能超过尺寸
 }
-
 
 void UGPUSDFCutter::DispatchLocalUpdate()
 {
@@ -574,7 +646,6 @@ void UGPUSDFCutter::DispatchLocalUpdate()
             });
         });
 }
-
 
 void UGPUSDFCutter::CalculateToolDimensions()
 {
