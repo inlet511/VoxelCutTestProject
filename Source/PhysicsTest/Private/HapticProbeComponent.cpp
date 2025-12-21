@@ -45,7 +45,7 @@ void UHapticProbeComponent::SetSDFVolumeProvider()
 	}
 }
 
-
+/*
 bool UHapticProbeComponent::CalculateForce(FVector& OutForce, FVector& OutTorque)
 {
 	if (!SDFProvider) return false;
@@ -191,6 +191,193 @@ bool UHapticProbeComponent::CalculateForce(FVector& OutForce, FVector& OutTorque
 	
 	return Hits > 0;
 }
+
+*/
+
+bool UHapticProbeComponent::CalculateForce(FVector& OutForce, FVector& OutTorque)
+{
+    if (!SDFProvider) return false;
+
+    // [开始计时]
+    double StartTime = FPlatformTime::Seconds();
+
+    // 1. 获取读锁 (保持不变，确保并行期间数据不被修改)
+    FRWScopeLock ReadLock(SDFProvider->GetDataLock(), SLT_ReadOnly);
+
+    FVector FinalForce = FVector::ZeroVector;
+    FVector FinalTorque = FVector::ZeroVector;
+    int32 TotalHits = 0;
+
+    // 获取公共数据 (避免在循环内重复调用函数)
+    const FTransform ProbeCompTransform = ProbeMeshComp->GetComponentTransform();
+    const FVector ProbeLocation = ProbeCompTransform.GetLocation();
+    const float VoxelSize = SDFProvider->GetVoxelSize();
+    const int32 NumPoints = LocalSamplePoints.Num();
+
+    // 阈值：如果点数太少(例如少于64个)，开启多线程的开销可能比直接算还大
+    // 同时，如果开启了可视化，必须强制单线程
+    bool bUseParallel = (NumPoints > 64) && !bVisualizeSamplePoints;
+
+    if (bUseParallel)
+    {
+        // =========================================================
+        // 并行模式 (ParallelFor)
+        // =========================================================
+        
+        // 预分配临时缓冲区，避免锁竞争
+        TArray<FVector> TempForces;
+        TArray<FVector> TempTorques;
+        TArray<uint8> TempHits; // 0 or 1
+        
+        TempForces.AddZeroed(NumPoints);
+        TempTorques.AddZeroed(NumPoints);
+        TempHits.AddZeroed(NumPoints);
+
+        ParallelFor(NumPoints, [&](int32 Idx)
+        {
+            const FVector& LocalPt = LocalSamplePoints[Idx];
+            
+            // 1. 变换点到世界空间
+            FVector WorldPt = ProbeCompTransform.TransformPosition(LocalPt);
+
+            // 2. 转换到体素空间
+            FVector VoxelCoord;
+            if (SDFProvider->WorldToVoxelSpace(WorldPt, VoxelCoord))
+            {
+                // 3. 采样 SDF
+                float SDFVal = SDFProvider->SampleSDF(VoxelCoord);
+
+                if (SDFVal < 0.0f) // 碰撞！
+                {
+                    float Depth = -SDFVal * VoxelSize;
+
+                    // --- 梯度计算 (内联以减少开销) ---
+                    const float H = 1.0f; 
+                    float DX_P = SDFProvider->SampleSDF(VoxelCoord + FVector(H, 0, 0));
+                    float DX_N = SDFProvider->SampleSDF(VoxelCoord - FVector(H, 0, 0));
+                    float DY_P = SDFProvider->SampleSDF(VoxelCoord + FVector(0, H, 0));
+                    float DY_N = SDFProvider->SampleSDF(VoxelCoord - FVector(0, H, 0));
+                    float DZ_P = SDFProvider->SampleSDF(VoxelCoord + FVector(0, 0, H));
+                    float DZ_N = SDFProvider->SampleSDF(VoxelCoord - FVector(0, 0, H));
+
+                    FVector Gradient(DX_P - DX_N, DY_P - DY_N, DZ_P - DZ_N);
+                    Gradient = Gradient.GetSafeNormal();
+
+                    // --- 材质计算 ---
+                    int32 MatID = SDFProvider->SampleMaterialID(VoxelCoord);
+                    float MatScale = MaterialStiffnessScales.FindRef(MatID);
+                    if(MatScale <= 0) MatScale = 1.0f;
+
+                    // --- 计算力 ---
+                    FVector PointForce = Gradient * (Depth * BaseStiffness * MatScale);
+                    
+                    // --- 计算力矩 ---
+                    FVector Arm = WorldPt - ProbeLocation;
+                    FVector PointTorque = FVector::CrossProduct(Arm, PointForce);
+
+                    // 写入临时数组 (无锁，因为 Index 唯一)
+                    TempForces[Idx] = PointForce;
+                    TempTorques[Idx] = PointTorque;
+                    TempHits[Idx] = 1;
+                }
+            }
+        });
+
+        // Reduce: 汇总结果
+        for (int32 i = 0; i < NumPoints; i++)
+        {
+            if (TempHits[i] > 0)
+            {
+                FinalForce += TempForces[i];
+                FinalTorque += TempTorques[i];
+                TotalHits++;
+            }
+        }
+    }
+    else
+    {
+        // =========================================================
+        // 串行模式 (用于调试或点数极少时)
+        // =========================================================
+        for (const FVector& LocalPt : LocalSamplePoints)
+        {
+            FVector WorldPt = ProbeCompTransform.TransformPosition(LocalPt);
+            FVector VoxelCoord;
+            
+            bool bIsValid = SDFProvider->WorldToVoxelSpace(WorldPt, VoxelCoord);
+            if (!bIsValid)
+            {
+                if (bVisualizeSamplePoints) DrawDebugPoint(GetWorld(), WorldPt, DebugPointSize, FColor::Yellow, false, 0.0f);
+                continue;
+            }
+
+            float SDFVal = SDFProvider->SampleSDF(VoxelCoord);
+
+            // 可视化逻辑 (仅在串行模式下运行)
+            if (bVisualizeSamplePoints)
+            {
+                FColor DebugColor = (SDFVal < 0.0f) ? FColor::Red : FColor::Green;
+                DrawDebugPoint(GetWorld(), WorldPt, DebugPointSize, DebugColor, false, 0.0f);
+            }
+
+            if (SDFVal < 0.0f)
+            {
+                float Depth = -SDFVal * VoxelSize;
+                
+                // 梯度计算
+                const float H = 1.0f; 
+                float DX_P = SDFProvider->SampleSDF(VoxelCoord + FVector(H, 0, 0));
+                float DX_N = SDFProvider->SampleSDF(VoxelCoord - FVector(H, 0, 0));
+                float DY_P = SDFProvider->SampleSDF(VoxelCoord + FVector(0, H, 0));
+                float DY_N = SDFProvider->SampleSDF(VoxelCoord - FVector(0, H, 0));
+                float DZ_P = SDFProvider->SampleSDF(VoxelCoord + FVector(0, 0, H));
+                float DZ_N = SDFProvider->SampleSDF(VoxelCoord - FVector(0, 0, H));
+
+                FVector Gradient(DX_P - DX_N, DY_P - DY_N, DZ_P - DZ_N);
+                Gradient = Gradient.GetSafeNormal();
+
+                int32 MatID = SDFProvider->SampleMaterialID(VoxelCoord);
+                float MatScale = MaterialStiffnessScales.FindRef(MatID);
+                if(MatScale <= 0) MatScale = 1.0f;
+
+                FVector PointForce = Gradient * (Depth * BaseStiffness * MatScale);
+                FinalForce += PointForce;
+                
+                FVector Arm = WorldPt - ProbeLocation;
+                FinalTorque += FVector::CrossProduct(Arm, PointForce);
+
+                TotalHits++;
+            }
+        }
+    }
+
+    // [结束计时] & Log
+    if (bLogCalcTime)
+    {
+        double EndTime = FPlatformTime::Seconds();
+        double DurationMs = (EndTime - StartTime) * 1000.0;
+        static int32 DebugLogCounter = 0;
+        if (DebugLogCounter++ % 100 == 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("CalculateForce Cost: %.4f ms (Parallel: %s, Points: %d)"), 
+                DurationMs, bUseParallel ? TEXT("ON") : TEXT("OFF"), NumPoints);
+        }
+    }
+
+    OutForce = FinalForce;
+    OutTorque = FinalTorque;
+
+    // 力向量可视化 (可以在主线程安全绘制)
+    if (bVisualizeForce)
+    {
+        FVector Start = ProbeLocation;
+        FVector ForceEnd = Start + FinalForce;
+        DrawDebugLine(GetWorld(), Start, ForceEnd, FColor::Purple, false);
+    }
+
+    return TotalHits > 0;
+}
+
 
 void UHapticProbeComponent::UpdateProbeMesh()
 {

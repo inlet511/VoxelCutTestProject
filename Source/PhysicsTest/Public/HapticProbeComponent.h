@@ -33,7 +33,7 @@ public:
 	
 	// --- 物理参数 ---
 	UPROPERTY(EditAnywhere, Category = "Haptics")
-	float BaseStiffness = 1000.0f;
+	float BaseStiffness = 1.0f;
 	
 	// 计算反馈力 (可以在 Haptic 线程调用)
 	// 返回 true 如果产生了碰撞
