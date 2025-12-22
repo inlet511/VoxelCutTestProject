@@ -7,6 +7,8 @@
 #include "Components/SceneComponent.h"
 #include "Engine/TextureRenderTargetVolume.h"
 #include "SDFVolumeProvider.h"
+#include "RHIResources.h"
+#include "RenderGraphFwd.h"
 #include "GPUSDFCutter.generated.h"
 
 
@@ -70,7 +72,7 @@ public:
 	UMaterialInterface* SDFMaterialInstance = nullptr;
 	
 	UPROPERTY()
-	UMaterialInstanceDynamic* SDFMaterialInstanceDynamic;
+	class UMaterialInstanceDynamic* SDFMaterialInstanceDynamic;
 
 
 	// --- ISDFVolumeProvider 实现 ---
