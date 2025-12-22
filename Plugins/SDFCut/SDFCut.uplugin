@@ -21,6 +21,11 @@
 			"LoadingPhase": "PostConfigInit"
 		},
 		{
+			"Name": "SDFCutHaptic",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
 			"Name": "SDFCutEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"

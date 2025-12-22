@@ -5,15 +5,30 @@
 #include "CoreMinimal.h"
 #include "Components/SceneComponent.h"
 #include "SDFVolumeProvider.h"
+#include "GameFramework/Actor.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Async/ParallelFor.h"
+#include "StaticMeshResources.h"
+#include "Rendering/PositionVertexBuffer.h"
+#include "Rendering/StaticMeshVertexBuffer.h" 
 #include "HapticProbeComponent.generated.h"
+
+// 辅助结构体：仅存储用于决策的几何信息
+struct FGeoSampleData
+{
+	FVector Gradient; // SDF梯度 (法线)
+	float Depth;      // SDF深度
+	bool bIsValid;    // 是否命中
+};
 
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class SDFCUT_API UHapticProbeComponent : public USceneComponent
+class SDFCUTHAPTIC_API UHapticProbeComponent : public USceneComponent
 {
 	GENERATED_BODY()
 
-public:
+public: 
 	// Sets default values for this component's properties
 	UHapticProbeComponent();
 	
@@ -23,6 +38,9 @@ public:
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Haptics", meta=(UseComponentPicker, AllowedClasses="/Script/Engine.StaticMeshComponent"))
 	FComponentReference VisualMeshRef;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Haptics", meta=(UseComponentPicker, AllowedClasses="/Script/Engine.SceneMeshComponent"))
+	FComponentReference RayStartPointRef;
 	
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Haptics")
 	float SamplingDensity = 1.0f;
@@ -39,6 +57,15 @@ public:
 	// 返回 true 如果产生了碰撞
 	UFUNCTION(BlueprintCallable, Category = "Haptics")
 	bool CalculateForce(FVector& OutForce, FVector& OutTorque);
+
+	/**
+	 * 使用球体追踪 (Sphere Tracing) 沿射线寻找 SDF 表面，在Calculate Force内部调用(假设已经有了读取锁)
+	 * @param StartPoint 射线的起始点 (通常是上一帧的安全位置，或设备物理手柄的位置)
+	 * @param EndPoint 射线的终点 (当前探针陷入内部的位置)
+	 * @param OutSurfacePoint 如果找到，输出表面接触点的世界坐标
+	 * @return 是否成功找到表面
+	 */
+	bool FindSurfacePointFromRay(const FVector& StartPoint, const FVector& EndPoint, FVector& OutSurfacePoint);
 	
 	/**
 	 * 根据静态网格更新探针形状
@@ -101,4 +128,7 @@ public:
 private:
 	// 探针的MeshComponent
 	UStaticMeshComponent* ProbeMeshComp;
+
+	// 探测射线起点组件
+	USceneComponent* RayStart;
 };

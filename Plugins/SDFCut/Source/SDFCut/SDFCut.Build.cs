@@ -6,6 +6,8 @@ public class SDFCut : ModuleRules
 {
 	public SDFCut(ReadOnlyTargetRules Target) : base(Target)
 	{
+		//bUsePrecompiled = true;
+		
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
 		PublicIncludePaths.AddRange(

@@ -2,12 +2,10 @@
 
 using UnrealBuildTool;
 
-public class SDFCutEditor : ModuleRules
+public class SDFCutHaptic : ModuleRules
 {
-	public SDFCutEditor(ReadOnlyTargetRules Target) : base(Target)
+	public SDFCutHaptic(ReadOnlyTargetRules Target) : base(Target)
 	{
-		//bUsePrecompiled = true;
-		
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
 		PublicIncludePaths.AddRange(
@@ -28,8 +26,7 @@ public class SDFCutEditor : ModuleRules
 			new string[]
 			{
 				"Core",
-				"GeometryCore", 
-				"GeometryFramework",
+				"GeometryCore", "GeometryFramework",
 			}
 			);
 			
@@ -39,9 +36,12 @@ public class SDFCutEditor : ModuleRules
 			{
 				"CoreUObject",
 				"Engine",
-				"Renderer",	
-				"MeshConversion"
-				// ... add private dependencies that you statically link with here ...	
+				"Renderer",
+				"RenderCore",
+				"RHI",
+				"GeometryFramework",
+				"SDFCut"
+								// ... add private dependencies that you statically link with here ...	
 			}
 			);
 		

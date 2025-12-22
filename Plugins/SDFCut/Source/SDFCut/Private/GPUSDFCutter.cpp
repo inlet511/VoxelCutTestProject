@@ -30,14 +30,14 @@ UGPUSDFCutter::UGPUSDFCutter()
 
 bool UGPUSDFCutter::WorldToVoxelSpace(const FVector& WorldLocation, FVector& OutVoxelCoord) const
 {
-	if (!TargetMeshActor)
+	if (!TargetMeshComponent)
 	{
 		return false;
 	}
 
 	// 1. 世界空间 -> 局部空间
 	// 使用 Actor 的变换矩阵将世界坐标转为局部坐标
-	FVector LocalPos = TargetMeshActor->GetActorTransform().InverseTransformPosition(WorldLocation);
+	FVector LocalPos = TargetMeshComponent->GetComponentTransform().InverseTransformPosition(WorldLocation);
 
 	// 2. 边界检查 (Broad Phase)
 	// 如果点在模型的局部包围盒之外，直接认为无效
@@ -137,7 +137,7 @@ void UGPUSDFCutter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (OriginalSDFTexture && ToolSDFTexture && TargetMeshActor)
+	if (OriginalSDFTexture && ToolSDFTexture && TargetMeshComponent)
 	{
 		InitResources();
 	}
@@ -160,7 +160,7 @@ FVector UGPUSDFCutter::CalculateGradientAtVoxel(const FVector& VoxelCoord) const
 
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	if (!bGPUResourcesInitialized || !TargetMeshActor || !CutToolActor)
+	if (!bGPUResourcesInitialized || !TargetMeshComponent || !CutToolComponent)
 		return;
 
 	UpdateToolTransform();
@@ -190,14 +190,14 @@ void UGPUSDFCutter::InitResources()
 	);
 
 	// 切削对象的LocalBounds
-	TargetLocalBounds = TargetMeshActor->GetStaticMeshComponent()->CalcLocalBounds().GetBox();
+	TargetLocalBounds = TargetMeshComponent->CalcLocalBounds().GetBox();
 	
 	// 像素各个维度均等，选任意轴向均可
 	VoxelSize = TargetLocalBounds.GetSize().X / SDFDimensions.X;
 
 	CalculateToolDimensions();
 
-	CurrentToolTransform = CutToolActor->GetTransform();
+	CurrentToolTransform = CutToolComponent->GetComponentTransform();
 
 	// 创建VolumeRT
 	VolumeRT = UKismetRenderingLibrary::CreateRenderTargetVolume(this, SDFDimensions.X, SDFDimensions.Y, SDFDimensions.Z, RTF_RGBA16f, FLinearColor::Black, false, true);
@@ -210,7 +210,7 @@ void UGPUSDFCutter::InitResources()
 		SDFMaterialInstanceDynamic->SetTextureParameterValue(FName("VolumeTexture"), VolumeRT);
 	}
 	// 分配材质实例给目标网格
-	TargetMeshActor->GetStaticMeshComponent()->SetMaterial(0, SDFMaterialInstanceDynamic);
+	TargetMeshComponent->SetMaterial(0, SDFMaterialInstanceDynamic);
 
 	InitCPUData();
 
@@ -243,7 +243,7 @@ void UGPUSDFCutter::InitResources()
 
 void UGPUSDFCutter::UpdateToolTransform()
 {
-	FTransform NewTransform = CutToolActor->GetActorTransform();
+	FTransform NewTransform = CutToolComponent->GetComponentTransform();
 	if (!CurrentToolTransform.Equals(NewTransform))
 	{
 		CurrentToolTransform = NewTransform;
@@ -253,7 +253,7 @@ void UGPUSDFCutter::UpdateToolTransform()
 
 void UGPUSDFCutter::UpdateTargetTransform()
 {
-	FTransform NewTransform = TargetMeshActor->GetActorTransform();
+	FTransform NewTransform = TargetMeshComponent->GetComponentTransform();
 	if (!CurrentTargetTransform.Equals(NewTransform))
 	{
 		CurrentTargetTransform = NewTransform;
@@ -263,7 +263,7 @@ void UGPUSDFCutter::UpdateTargetTransform()
 
 bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFValue, FVector& OutNormal,int32& OutMaterialID)
 {
-	if (CPU_SDFData.Num() == 0 || !TargetMeshActor)
+	if (CPU_SDFData.Num() == 0 || !TargetMeshComponent)
 	{
 		OutSDFValue = 0.0f;
 		OutNormal = FVector::UpVector;
@@ -272,8 +272,8 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	}
 
 	// Use the StaticMeshComponent's local space for sampling to match how bounds/voxels were computed
-	UStaticMeshComponent* MeshComp = TargetMeshActor->GetStaticMeshComponent();
-	if (!MeshComp)
+
+	if (!TargetMeshComponent)
 	{
 		OutSDFValue = 0.0f;
 		OutNormal = FVector::UpVector;
@@ -282,16 +282,16 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	}
 
 	// Convert world position to the mesh component's local space
-	FVector LocalPos = MeshComp->GetComponentTransform().InverseTransformPosition(WorldLocation);
+	FVector LocalPos = TargetMeshComponent->GetComponentTransform().InverseTransformPosition(WorldLocation);
 
 	// Compute local bounds from the component (matches CalcLocalBounds used elsewhere)
-	FBox LocalBounds = MeshComp->CalcLocalBounds().GetBox();
+	FBox LocalBounds = TargetMeshComponent->CalcLocalBounds().GetBox();
 
 	// If outside the target bounds, indicate failure
 	if (!LocalBounds.IsInside(LocalPos))
 	{
 		OutSDFValue = TNumericLimits<float>::Max();
-		OutNormal = (WorldLocation - TargetMeshActor->GetActorLocation()).GetSafeNormal();
+		OutNormal = (WorldLocation - TargetMeshComponent->GetComponentLocation()).GetSafeNormal();
 		OutMaterialID = -1; // 无效 ID
 		return false;
 	}
@@ -325,7 +325,7 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 	);
 
 	// Transform gradient (component local) to world space normal
-	OutNormal = MeshComp->GetComponentTransform().TransformVector(Gradient);
+	OutNormal = TargetMeshComponent->GetComponentTransform().TransformVector(Gradient);
 	OutNormal.Normalize();
 
 	return true;
@@ -333,7 +333,7 @@ bool UGPUSDFCutter::GetSDFValueAndNormal(FVector WorldLocation, float& OutSDFVal
 
 float UGPUSDFCutter::CalculateCurrentVolume(int32 MaterialID, bool bWorldSpace)
 {
-	if (CPU_SDFData.Num() == 0 || !TargetMeshActor)
+	if (CPU_SDFData.Num() == 0 || !TargetMeshComponent)
 	{
 		return 0.0f;
 	}
@@ -368,7 +368,7 @@ float UGPUSDFCutter::CalculateCurrentVolume(int32 MaterialID, bool bWorldSpace)
 	// 4. 如果需要世界空间体积，乘以 Actor 的缩放系数
 	if (bWorldSpace)
 	{
-		FVector ActorScale = TargetMeshActor->GetActorScale3D();
+		FVector ActorScale = TargetMeshComponent->GetComponentScale();
 		// 体积缩放是三个轴向缩放的乘积
 		float ScaleFactor = FMath::Abs(ActorScale.X * ActorScale.Y * ActorScale.Z);
 		return LocalVolume * ScaleFactor;
@@ -465,13 +465,13 @@ int32 UGPUSDFCutter::GetVoxelIndex(int32 X, int32 Y, int32 Z) const
 void UGPUSDFCutter::CalculateToolAABBInTargetSpace(const FTransform& ToolTransform, FIntVector& OutVoxelMin,
                                                    FIntVector& OutVoxelMax)
 {
-	if (!CutToolActor || !TargetMeshActor)
+	if (!CutToolComponent || !TargetMeshComponent)
 	{
 		return;
 	}
 
 	// Target 这里表示被切削对象的局部坐标系
-	FTransform TargetToWorld = TargetMeshActor->GetActorTransform();
+	FTransform TargetToWorld = TargetMeshComponent->GetComponentTransform();
 	FTransform WorldToTarget = TargetToWorld.Inverse();
 	FTransform ToolToTarget = ToolTransform * WorldToTarget;
 
@@ -652,10 +652,8 @@ void UGPUSDFCutter::DispatchLocalUpdate()
 
 void UGPUSDFCutter::CalculateToolDimensions()
 {
-	// 从CutToolActor的网格组件获取边界
-	UStaticMeshComponent* ToolMeshComponent = CutToolActor->GetStaticMeshComponent();
 
-	ToolLocalBounds = ToolMeshComponent->CalcLocalBounds().GetBox();
+	ToolLocalBounds = CutToolComponent->CalcLocalBounds().GetBox();
 	// 计算工具尺寸
 	ToolOriginalSize = ToolLocalBounds.GetSize();
 }

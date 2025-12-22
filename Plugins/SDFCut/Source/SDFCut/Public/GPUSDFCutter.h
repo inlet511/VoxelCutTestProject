@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "SDFVolumeProvider.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/TextureRenderTargetVolume.h"
 #include "SDFVolumeProvider.h"
 #include "RHIResources.h"
@@ -63,10 +64,10 @@ public:
 
 	// 目标网格组件（用于渲染）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
-	AStaticMeshActor* TargetMeshActor = nullptr;
+	UStaticMeshComponent* TargetMeshComponent = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
-	AStaticMeshActor* CutToolActor = nullptr;
+	UStaticMeshComponent* CutToolComponent = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GPU SDF Cutter")
 	UMaterialInterface* SDFMaterialInstance = nullptr;
