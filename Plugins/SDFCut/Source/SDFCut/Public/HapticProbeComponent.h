@@ -9,7 +9,7 @@
 
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class PHYSICSTEST_API UHapticProbeComponent : public USceneComponent
+class SDFCUT_API UHapticProbeComponent : public USceneComponent
 {
 	GENERATED_BODY()
 
