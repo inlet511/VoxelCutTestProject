@@ -33,6 +33,7 @@ void UHapticProbeComponent::SetSDFVolumeProvider()
 	if (!CutterActor)
 	{
 		UE_LOG(LogTemp,Warning, TEXT("请设置CutterActor"));
+		return;
 	}
 	// 尝试获取接口
 	UGPUSDFCutter* Cutter = CutterActor->FindComponentByClass<UGPUSDFCutter>();
@@ -45,6 +46,7 @@ void UHapticProbeComponent::SetSDFVolumeProvider()
 	if (!Cutter || !SDFProvider)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("CutterActor中没有GPUSDFCutter组件!"))
+		return;
 	}
 }
 

@@ -62,12 +62,18 @@ public:
 	UPROPERTY()
 	UTextureRenderTargetVolume* VolumeRT = nullptr;
 
-	// 目标网格组件（用于渲染）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
-	UStaticMeshComponent* TargetMeshComponent = nullptr;
+	AActor* TargetMeshActor = nullptr;
+	
+	UPROPERTY(EditInstanceOnly, Category = "GPU SDF Cutter")
+	FName TargetComponentTag; 
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GPU SDF Cutter")
-	UStaticMeshComponent* CutToolComponent = nullptr;
+	AActor* CutToolActor = nullptr;
+	
+	UPROPERTY(EditInstanceOnly, Category = "GPU SDF Cutter")
+	FName CutToolComponentTag; 	
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GPU SDF Cutter")
 	UMaterialInterface* SDFMaterialInstance = nullptr;
@@ -84,7 +90,12 @@ public:
 	virtual FRWLock& GetDataLock() override { return DataRWLock; }
 private:
 	// 读写锁，防止切削回读时，Haptics正在读取导致崩溃
-	FRWLock DataRWLock; 
+	FRWLock DataRWLock;
+
+	void FindReferenceComponents();
+	UStaticMeshComponent* TargetMeshComponent = nullptr;	
+	UStaticMeshComponent* CutToolComponent = nullptr;
+
 	
 protected:
 	// Called when the game starts

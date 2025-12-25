@@ -133,9 +133,43 @@ int32 UGPUSDFCutter::SampleMaterialID(const FVector& VoxelCoord) const
 	return 0; // Fallback
 }
 
+void UGPUSDFCutter::FindReferenceComponents()
+{
+	if(!TargetMeshActor) return;
+    
+	// 获取所有组件并根据 Tag 查找
+	TArray<UStaticMeshComponent*> Components;
+	TargetMeshActor->GetComponents<UStaticMeshComponent>(Components);
+    
+	for(UStaticMeshComponent* Comp : Components)
+	{
+		if(Comp->ComponentHasTag(TargetComponentTag))
+		{
+			TargetMeshComponent = Comp;
+			break;
+		}
+	}
+
+	if (!CutToolActor) return;
+	// 获取所有组件并根据 Tag 查找
+	TArray<UStaticMeshComponent*> Components2;
+	CutToolActor->GetComponents<UStaticMeshComponent>(Components2);
+    
+	for(UStaticMeshComponent* Comp : Components2)
+	{
+		if(Comp->ComponentHasTag(CutToolComponentTag))
+		{
+			CutToolComponent = Comp;
+			break;
+		}
+	}
+}
+
 void UGPUSDFCutter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	FindReferenceComponents();
 
 	if (OriginalSDFTexture && ToolSDFTexture && TargetMeshComponent)
 	{
