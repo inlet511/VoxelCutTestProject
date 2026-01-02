@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\\\Dev\\\\CustomPhysicsComponentTest\\\\Plugins\\\\SDFCut\\\\Source\" /B)",
+      "WebSearch",
+      "WebFetch(domain:dev.epicgames.com)",
+      "Bash(find:*)"
+    ]
+  }
+}
