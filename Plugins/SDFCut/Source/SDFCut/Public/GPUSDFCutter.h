@@ -51,6 +51,60 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "SDF")
 	float CalculateCurrentVolume(int32 MaterialID, bool bWorldSpace = true);
+
+	/**
+	 * Export current SDF volume to OBJ mesh file.
+	 * Uses Marching Cubes algorithm to extract iso-surface at SDF=0.
+	 *
+	 * @param FilePath      Full path to output OBJ file
+	 * @param bIncludeNormals  Include vertex normals in export
+	 * @param bIncludeMaterialColors  Encode material IDs as vertex colors
+	 * @return True if export succeeded
+	 */
+	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter|Export")
+	bool ExportToOBJ(
+		const FString& FilePath,
+		bool bIncludeNormals = true,
+		bool bIncludeMaterialColors = true
+	);
+
+	/**
+	 * Export current SDF volume to OBJ mesh file with custom cube size.
+	 * Smaller cube size = more detail but slower export.
+	 *
+	 * @param FilePath      Full path to output OBJ file
+	 * @param CubeSize      Size of marching cubes cells (0 = use voxel size)
+	 * @param bIncludeNormals  Include vertex normals in export
+	 * @param bIncludeMaterialColors  Encode material IDs as vertex colors
+	 * @return True if export succeeded
+	 */
+	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter|Export")
+	bool ExportToOBJWithDetail(
+		const FString& FilePath,
+		float CubeSize = 0.0f,
+		bool bIncludeNormals = true,
+		bool bIncludeMaterialColors = true
+	);
+
+	/**
+	 * Extract mesh from current SDF data (for further processing).
+	 * Returns mesh in local space of the target mesh component.
+	 *
+	 * @param OutVertices    Output vertex positions
+	 * @param OutTriangles   Output triangle indices (3 indices per triangle)
+	 * @param OutNormals     Output vertex normals
+	 * @param OutMaterialIDs Output per-vertex material IDs
+	 * @param CubeSize       Size of marching cubes cells (0 = use voxel size)
+	 * @return True if extraction succeeded
+	 */
+	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter|Export")
+	bool ExtractMesh(
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals,
+		TArray<int32>& OutMaterialIDs,
+		float CubeSize = 0.0f
+	);
 	
 	// SDF纹理（CPU端引用）
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")

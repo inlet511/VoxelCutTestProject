@@ -2,6 +2,8 @@
 
 
 #include "GPUSDFCutter.h"
+#include "SDFMeshExporter.h"
+#include "DynamicMesh/DynamicMesh3.h"
 
 #include "Engine/VolumeTexture.h"
 #include "RenderGraphUtils.h"
@@ -690,4 +692,173 @@ void UGPUSDFCutter::CalculateToolDimensions()
 	ToolLocalBounds = CutToolComponent->CalcLocalBounds().GetBox();
 	// 计算工具尺寸
 	ToolOriginalSize = ToolLocalBounds.GetSize();
+}
+
+bool UGPUSDFCutter::ExportToOBJ(
+	const FString& FilePath,
+	bool bIncludeNormals,
+	bool bIncludeMaterialColors)
+{
+	return ExportToOBJWithDetail(FilePath, 0.0f, bIncludeNormals, bIncludeMaterialColors);
+}
+
+bool UGPUSDFCutter::ExportToOBJWithDetail(
+	const FString& FilePath,
+	float CubeSize,
+	bool bIncludeNormals,
+	bool bIncludeMaterialColors)
+{
+	// Ensure we have valid data
+	if (CPU_SDFData.Num() == 0 || !TargetMeshComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ExportToOBJ: No SDF data available or target mesh not set"));
+		return false;
+	}
+
+	// Acquire read lock to prevent data modification during export
+	FRWScopeLock ReadLock(DataRWLock, SLT_ReadOnly);
+
+	// Configure marching cubes
+	FSDFMeshExporter::FMarchingCubesConfig MCConfig;
+	MCConfig.IsoValue = 0.0f;
+	MCConfig.CubeSize = (CubeSize > 0.0f) ? CubeSize : VoxelSize;
+	MCConfig.bParallelCompute = true;
+
+	// Extract mesh
+	UE::Geometry::FDynamicMesh3 ExtractedMesh;
+	TArray<int32> MaterialIDs;
+
+	bool bSuccess = FSDFMeshExporter::ExtractMeshFromSDF(
+		CPU_SDFData,
+		SDFDimensions,
+		VoxelSize,
+		TargetLocalBounds,
+		MCConfig,
+		ExtractedMesh,
+		bIncludeMaterialColors ? &MaterialIDs : nullptr
+	);
+
+	if (!bSuccess || ExtractedMesh.TriangleCount() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ExportToOBJ: Mesh extraction failed or produced empty mesh"));
+		return false;
+	}
+
+	// Configure OBJ export
+	FSDFMeshExporter::FOBJExportConfig OBJConfig;
+	OBJConfig.bIncludeNormals = bIncludeNormals;
+	OBJConfig.bIncludeVertexColors = bIncludeMaterialColors;
+	OBJConfig.bReverseWinding = true; // UE left-handed to OBJ right-handed
+
+	// Convert material IDs to colors if needed
+	TArray<FLinearColor> VertexColors;
+	if (bIncludeMaterialColors && MaterialIDs.Num() > 0)
+	{
+		VertexColors = FSDFMeshExporter::MaterialIDsToColors(MaterialIDs);
+	}
+
+	// Write to file
+	bSuccess = FSDFMeshExporter::WriteMeshToOBJ(
+		ExtractedMesh,
+		FilePath,
+		OBJConfig,
+		bIncludeMaterialColors ? &VertexColors : nullptr
+	);
+
+	if (bSuccess)
+	{
+		UE_LOG(LogTemp, Log, TEXT("ExportToOBJ: Successfully exported %d triangles to %s"),
+			ExtractedMesh.TriangleCount(), *FilePath);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ExportToOBJ: Failed to write file %s"), *FilePath);
+	}
+
+	return bSuccess;
+}
+
+bool UGPUSDFCutter::ExtractMesh(
+	TArray<FVector>& OutVertices,
+	TArray<int32>& OutTriangles,
+	TArray<FVector>& OutNormals,
+	TArray<int32>& OutMaterialIDs,
+	float CubeSize)
+{
+	OutVertices.Reset();
+	OutTriangles.Reset();
+	OutNormals.Reset();
+	OutMaterialIDs.Reset();
+
+	if (CPU_SDFData.Num() == 0 || !TargetMeshComponent)
+	{
+		return false;
+	}
+
+	FRWScopeLock ReadLock(DataRWLock, SLT_ReadOnly);
+
+	FSDFMeshExporter::FMarchingCubesConfig MCConfig;
+	MCConfig.IsoValue = 0.0f;
+	MCConfig.CubeSize = (CubeSize > 0.0f) ? CubeSize : VoxelSize;
+	MCConfig.bParallelCompute = true;
+
+	UE::Geometry::FDynamicMesh3 ExtractedMesh;
+
+	bool bSuccess = FSDFMeshExporter::ExtractMeshFromSDF(
+		CPU_SDFData,
+		SDFDimensions,
+		VoxelSize,
+		TargetLocalBounds,
+		MCConfig,
+		ExtractedMesh,
+		&OutMaterialIDs
+	);
+
+	if (!bSuccess)
+	{
+		return false;
+	}
+
+	// Convert FDynamicMesh3 to arrays
+	// Build vertex ID map
+	TMap<int32, int32> VertexIDToArrayIndex;
+	int32 ArrayIndex = 0;
+
+	for (int32 VertexID : ExtractedMesh.VertexIndicesItr())
+	{
+		FVector3d Pos = ExtractedMesh.GetVertex(VertexID);
+		OutVertices.Add(FVector(Pos.X, Pos.Y, Pos.Z));
+
+		if (ExtractedMesh.HasVertexNormals())
+		{
+			FVector3f Normal = ExtractedMesh.GetVertexNormal(VertexID);
+			OutNormals.Add(FVector(Normal.X, Normal.Y, Normal.Z));
+		}
+
+		VertexIDToArrayIndex.Add(VertexID, ArrayIndex);
+		ArrayIndex++;
+	}
+
+	// Convert triangles
+	for (int32 TriID : ExtractedMesh.TriangleIndicesItr())
+	{
+		UE::Geometry::FIndex3i Tri = ExtractedMesh.GetTriangle(TriID);
+		OutTriangles.Add(VertexIDToArrayIndex[Tri.A]);
+		OutTriangles.Add(VertexIDToArrayIndex[Tri.B]);
+		OutTriangles.Add(VertexIDToArrayIndex[Tri.C]);
+	}
+
+	// Reindex material IDs to match new vertex array
+	TArray<int32> ReindexedMaterialIDs;
+	ReindexedMaterialIDs.SetNum(OutVertices.Num());
+	for (const TPair<int32, int32>& Pair : VertexIDToArrayIndex)
+	{
+		if (OutMaterialIDs.IsValidIndex(Pair.Key))
+		{
+			ReindexedMaterialIDs[Pair.Value] = OutMaterialIDs[Pair.Key];
+		}
+	}
+	OutMaterialIDs = MoveTemp(ReindexedMaterialIDs);
+
+	return OutVertices.Num() > 0;
 }
