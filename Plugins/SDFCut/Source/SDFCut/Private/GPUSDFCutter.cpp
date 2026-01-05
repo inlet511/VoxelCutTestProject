@@ -175,7 +175,9 @@ void UGPUSDFCutter::BeginPlay()
 
 	if (OriginalSDFTexture && ToolSDFTexture && TargetMeshComponent)
 	{
-		InitResources();
+		// 标记需要初始化，延迟到第一帧 Tick 执行
+		// 这样可以确保所有资源（包括子关卡中的）都有时间初始化
+		bPendingResourceInit = true;
 	}
 }
 
@@ -196,8 +198,21 @@ FVector UGPUSDFCutter::CalculateGradientAtVoxel(const FVector& VoxelCoord) const
 
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
+	// 延迟初始化：等待第一帧再初始化资源
+	if (bPendingResourceInit)
+	{
+		bPendingResourceInit = false;
+		InitResources();
+	}
+
 	if (!bGPUResourcesInitialized || !TargetMeshComponent || !CutToolComponent)
 		return;
+
+	// 如果初始纹理复制尚未完成，重试
+	if (bPendingInitialCopy)
+	{
+		ExecuteInitialTextureCopy();
+	}
 
 	UpdateToolTransform();
 	UpdateTargetTransform();
@@ -239,6 +254,10 @@ void UGPUSDFCutter::InitResources()
 	VolumeRT = UKismetRenderingLibrary::CreateRenderTargetVolume(this, SDFDimensions.X, SDFDimensions.Y, SDFDimensions.Z, RTF_RGBA16f, FLinearColor::Black, false, true);
     VolumeRT->bCanCreateUAV = true;
 
+	// 等待 VolumeRT 的 RHI 资源初始化完成
+	// 子关卡加载时，资源创建是异步的，需要等待
+	FlushRenderingCommands();
+
 	// 创建SDF渲染材质实例
 	SDFMaterialInstanceDynamic = UMaterialInstanceDynamic::Create(SDFMaterialInstance, this);
 	if (VolumeRT)
@@ -251,30 +270,90 @@ void UGPUSDFCutter::InitResources()
 	InitCPUData();
 
 	// 存储外部纹理的RHI引用(静态图片，可以直接获取RHI
-	OriginalSDFRHIRef = OriginalSDFTexture->GetResource()->GetTextureRHI();	
+	OriginalSDFRHIRef = OriginalSDFTexture->GetResource()->GetTextureRHI();
 	ToolSDFRHIRef = ToolSDFTexture->GetResource()->GetTextureRHI();
 
-	// 刚刚创建的资源，获取资源对象的指针（CPU端的FTextureResource指针是立即有效的， RHI则不一定）
-	FTextureResource* DestVolumeResource = VolumeRT->GetResource();
+	bGPUResourcesInitialized = true;
 
-	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this, OriginalTextureRHI = OriginalSDFRHIRef, DestVolumeResource](FRHICommandListImmediate& RHICmdList)
+	// 尝试执行初始纹理复制（子关卡加载时可能需要延迟）
+	ExecuteInitialTextureCopy();
+}
+
+void UGPUSDFCutter::ExecuteInitialTextureCopy()
+{
+	if (!VolumeRT || !OriginalSDFTexture)
+	{
+		bPendingInitialCopy = true;
+		return;
+	}
+
+	// 检查源纹理是否已完全流式加载
+	if (!OriginalSDFTexture->IsFullyStreamedIn())
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("GPUSDFCutter: OriginalSDFTexture not fully streamed in, retrying next frame"));
+		bPendingInitialCopy = true;
+		return;
+	}
+
+	// 确保源纹理的 RHI 资源已就绪
+	FTextureResource* OriginalResource = OriginalSDFTexture->GetResource();
+	if (!OriginalResource)
+	{
+		bPendingInitialCopy = true;
+		return;
+	}
+
+	FTextureRHIRef OriginalTextureRHI = OriginalResource->GetTextureRHI();
+	if (!OriginalTextureRHI.IsValid())
+	{
+		bPendingInitialCopy = true;
+		return;
+	}
+
+	// 获取目标纹理资源
+	FTextureResource* DestVolumeResource = VolumeRT->GetResource();
+	if (!DestVolumeResource)
+	{
+		bPendingInitialCopy = true;
+		return;
+	}
+
+	FTextureRHIRef DestVolumeRHI = DestVolumeResource->GetTextureRHI();
+	if (!DestVolumeRHI.IsValid())
+	{
+		bPendingInitialCopy = true;
+		return;
+	}
+
+	// 在游戏线程检查格式匹配
+	EPixelFormat SrcFormat = OriginalTextureRHI->GetDesc().Format;
+	EPixelFormat DstFormat = DestVolumeRHI->GetDesc().Format;
+	if (SrcFormat != DstFormat)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: Texture format mismatch (Src=%d, Dst=%d), retrying next frame"), (int32)SrcFormat, (int32)DstFormat);
+		bPendingInitialCopy = true;
+		return;
+	}
+
+	// 使用 RHI 引用捕获，确保资源在渲染命令执行期间有效
+	ENQUEUE_RENDER_COMMAND(InitGPUSDFCutterResources)([this, OriginalTextureRHI, DestVolumeRHI](FRHICommandListImmediate& RHICmdList)
 	{
 		FRDGBuilder GraphBuilder(RHICmdList);
 
 		// 注册外部资源
 		FRDGTextureRef OriginalTextureRef = RegisterExternalTexture(GraphBuilder, OriginalTextureRHI, TEXT("VolumeTexture"));
-
-		// 此时 UpdateResource 发出的 InitRHI 命令保证已经执行完成
-		FRHITexture* DestVolumeRHI = DestVolumeResource->GetTextureRHI();
 		FRDGTextureRef VolumeRTTextureRef = RegisterExternalTexture(GraphBuilder, DestVolumeRHI, TEXT("DestVolumeRT"));
-		
+
 		// 复制整个纹理
 		AddCopyTexturePass(GraphBuilder, OriginalTextureRef, VolumeRTTextureRef);
 
 		GraphBuilder.Execute();
-	});
 
-	bGPUResourcesInitialized = true;
+		// 复制成功，清除标记
+		bPendingInitialCopy = false;
+
+		UE_LOG(LogTemp, Log, TEXT("GPUSDFCutter: Initial texture copy completed successfully"));
+	});
 }
 
 void UGPUSDFCutter::UpdateToolTransform()

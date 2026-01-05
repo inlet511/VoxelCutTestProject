@@ -10,6 +10,7 @@
 #include "SDFVolumeProvider.h"
 #include "RHIResources.h"
 #include "RenderGraphFwd.h"
+#include <atomic>
 #include "GPUSDFCutter.generated.h"
 
 
@@ -214,6 +215,14 @@ private:
 	TArray<FFloat16Color> CPU_SDFData;
     
 	// 标记是否正在回读，防止重入
-	bool bIsReadingBack = false;
+	std::atomic<bool> bIsReadingBack{false};
 
+	// 标记是否需要延迟执行初始纹理复制（子关卡加载时 RHI 资源可能未就绪）
+	std::atomic<bool> bPendingInitialCopy{false};
+
+	// 标记是否需要延迟初始化（等待资源就绪）
+	bool bPendingResourceInit = false;
+
+	// 执行初始纹理复制
+	void ExecuteInitialTextureCopy();
 };
