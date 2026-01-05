@@ -171,14 +171,81 @@ void UGPUSDFCutter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 不再自动初始化 GPU 资源
+	// 子关卡加载时，资源可能还未就绪，需要用户手动调用 InitSDFCutter()
+	// 这样用户可以在确保所有资源加载完成后再初始化
+}
+
+bool UGPUSDFCutter::InitSDFCutter()
+{
+	if (bGPUResourcesInitialized)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: Already initialized"));
+		return true;
+	}
+
+	// 查找引用的组件
 	FindReferenceComponents();
 
-	if (OriginalSDFTexture && ToolSDFTexture && TargetMeshComponent)
+	// 检查必要的资源是否就绪
+	if (!OriginalSDFTexture)
 	{
-		// 标记需要初始化，延迟到第一帧 Tick 执行
-		// 这样可以确保所有资源（包括子关卡中的）都有时间初始化
-		bPendingResourceInit = true;
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: OriginalSDFTexture is not set"));
+		return false;
 	}
+
+	if (!ToolSDFTexture)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: ToolSDFTexture is not set"));
+		return false;
+	}
+
+	if (!TargetMeshComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: TargetMeshComponent not found (check TargetMeshActor and TargetComponentTag)"));
+		return false;
+	}
+
+	if (!CutToolComponent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: CutToolComponent not found (check CutToolActor and CutToolComponentTag)"));
+		return false;
+	}
+
+	// 检查纹理资源是否已完全流式加载
+	if (!OriginalSDFTexture->IsFullyStreamedIn())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: OriginalSDFTexture not fully streamed in yet"));
+		return false;
+	}
+
+	if (!ToolSDFTexture->IsFullyStreamedIn())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: ToolSDFTexture not fully streamed in yet"));
+		return false;
+	}
+
+	// 检查纹理 RHI 资源是否就绪
+	FTextureResource* OriginalResource = OriginalSDFTexture->GetResource();
+	FTextureResource* ToolResource = ToolSDFTexture->GetResource();
+
+	if (!OriginalResource || !OriginalResource->GetTextureRHI().IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: OriginalSDFTexture RHI resource not ready"));
+		return false;
+	}
+
+	if (!ToolResource || !ToolResource->GetTextureRHI().IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GPUSDFCutter: ToolSDFTexture RHI resource not ready"));
+		return false;
+	}
+
+	// 所有资源就绪，执行初始化
+	InitResources();
+
+	UE_LOG(LogTemp, Log, TEXT("GPUSDFCutter: Successfully initialized"));
+	return bGPUResourcesInitialized;
 }
 
 FVector UGPUSDFCutter::CalculateGradientAtVoxel(const FVector& VoxelCoord) const
@@ -198,13 +265,6 @@ FVector UGPUSDFCutter::CalculateGradientAtVoxel(const FVector& VoxelCoord) const
 
 void UGPUSDFCutter::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	// 延迟初始化：等待第一帧再初始化资源
-	if (bPendingResourceInit)
-	{
-		bPendingResourceInit = false;
-		InitResources();
-	}
-
 	if (!bGPUResourcesInitialized || !TargetMeshComponent || !CutToolComponent)
 		return;
 

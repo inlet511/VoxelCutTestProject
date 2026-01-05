@@ -35,8 +35,22 @@ public:
 	// Sets default values for this component's properties
 	UGPUSDFCutter();
 
-	// 初始化SDF纹理
+	/**
+	 * 手动初始化 SDF 切削系统（必须在所有资源加载完成后调用）
+	 * 用于子关卡场景：在子关卡加载完成后手动调用此函数
+	 * @return true 如果初始化成功，false 如果资源未就绪
+	 */
 	UFUNCTION(BlueprintCallable, Category = "GPU SDF Cutter")
+	bool InitSDFCutter();
+
+	/**
+	 * 检查 SDF 切削系统是否已初始化
+	 */
+	UFUNCTION(BlueprintPure, Category = "GPU SDF Cutter")
+	bool IsInitialized() const { return bGPUResourcesInitialized; }
+
+	// 初始化SDF纹理
+	UFUNCTION()
 	void InitResources();
 
 	// 更新切削工具Transform
@@ -219,9 +233,6 @@ private:
 
 	// 标记是否需要延迟执行初始纹理复制（子关卡加载时 RHI 资源可能未就绪）
 	std::atomic<bool> bPendingInitialCopy{false};
-
-	// 标记是否需要延迟初始化（等待资源就绪）
-	bool bPendingResourceInit = false;
 
 	// 执行初始纹理复制
 	void ExecuteInitialTextureCopy();
